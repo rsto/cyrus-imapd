@@ -1315,7 +1315,8 @@ static int getcalendarevents_cb(void *vrock, struct caldav_data *cdata)
     }
     if (_wantprop(rock->get->props, "calendarId")) {
         json_object_set_new(jsevent, "calendarId",
-                            json_string(strrchr(cdata->dav.mailbox, '.')+1));
+                            json_string(strrchr(cdata->dav.mailbox,
+                                                INT_HIERSEP_CHAR)+1));
     }
     json_object_set_new(jsevent, "id", json_string(cdata->ical_uid));
 
