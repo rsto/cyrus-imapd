@@ -1227,7 +1227,7 @@ static json_t *jmap_contact_from_vcard(struct vparse_card *card,
                                        struct carddav_data *cdata,
                                        struct index_record *record,
                                        hash_table *props,
-                                       const char *mboxname)
+                                       struct mailbox *mailbox)
 {
     strarray_t *empty = NULL;
     json_t *obj = json_pack("{}");
@@ -1257,7 +1257,7 @@ static json_t *jmap_contact_from_vcard(struct vparse_card *card,
         const char *ns = DAV_ANNOT_NS "<" XML_NS_CYRUS ">importance";
 
         buf_free(&buf);
-        annotatemore_msg_lookup(mboxname, record->uid,
+        annotatemore_msg_lookup(mailbox, record->uid,
                                 ns, "", &buf);
         if (buf.len)
             val = strtod(buf_cstring(&buf), NULL);
@@ -1271,7 +1271,7 @@ static json_t *jmap_contact_from_vcard(struct vparse_card *card,
         const char *ns = DAV_ANNOT_NS "<" XML_NS_CYRUS ">importance";
 
         buf_free(&buf);
-        annotatemore_msg_lookup(mboxname, record->uid,
+        annotatemore_msg_lookup(mailbox, record->uid,
                                 ns, "", &buf);
         if (buf.len)
             val = strtod(buf_cstring(&buf), NULL);
@@ -1660,7 +1660,7 @@ static int getcontacts_cb(void *rock, struct carddav_data *cdata)
 
     /* Convert the VCARD to a JMAP contact. */
     json_t *obj = jmap_contact_from_vcard(vcard->objects, cdata, &record,
-                                          crock->get->props, crock->mailbox->name);
+                                          crock->get->props, crock->mailbox);
     json_array_append_new(crock->get->list, obj);
 
     vparse_free_card(vcard);
@@ -2045,7 +2045,7 @@ static int getcontactquery_cb(void *rock, struct carddav_data *cdata) {
      * initialize props with any non-NULL field in filter f or its subconditions.
      */
     contact = jmap_contact_from_vcard(vcard->objects, cdata, &record,
-                                      NULL /* props */, crock->mailbox->name);
+                                      NULL /* props */, crock->mailbox);
     vparse_free_card(vcard);
 
     /* Match the contact against the filter and update statistics. */
@@ -3179,7 +3179,7 @@ static void _contact_copy(jmap_req_t *req,
 
     /* Patch JMAP event */
     json_t *src_card = jmap_contact_from_vcard(vcard->objects, cdata, &record,
-                                               NULL, src_mbox->name);
+                                               NULL, src_mbox);
     if (src_card) {
         json_object_del(src_card, "x-href");  // immutable and WILL change
         dst_card = jmap_patchobject_apply(src_card, jcard);

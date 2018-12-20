@@ -234,7 +234,7 @@ static int _mbox_find_specialuse_cb(const mbentry_t *mbentry, void *rock)
     struct _mbox_find_specialuse_rock *d = (struct _mbox_find_specialuse_rock *)rock;
     struct buf attrib = BUF_INITIALIZER;
 
-    annotatemore_lookup(mbentry->name, "/specialuse", d->accountid, &attrib);
+    annotatemore_lookup_mbe(mbentry, "/specialuse", d->accountid, &attrib);
 
     if (attrib.len) {
         strarray_t *uses = strarray_split(buf_cstring(&attrib), " ", 0);
@@ -1528,7 +1528,7 @@ static int _mbox_find_xrole_cb(const mbentry_t *mbentry, void *rock)
     struct _mbox_find_xrole_rock *d = (struct _mbox_find_xrole_rock *)rock;
     struct buf attrib = BUF_INITIALIZER;
 
-    annotatemore_lookup(mbentry->name, IMAP_ANNOT_NS "x-role", d->accountid, &attrib);
+    annotatemore_lookup_mbe(mbentry, IMAP_ANNOT_NS "x-role", d->accountid, &attrib);
 
     if (attrib.len && !strcmp(buf_cstring(&attrib), d->xrole)) {
         if (d->mboxname) d->mboxname = xstrdup(mbentry->name);

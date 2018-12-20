@@ -3035,7 +3035,7 @@ static int propfind_fromresource(const xmlChar *name, xmlNsPtr ns,
     buf_printf(&fctx->buf, DAV_ANNOT_NS "<%s>%s",
                (const char *) ns->href, name);
 
-    r = annotatemore_msg_lookup(fctx->mailbox->name, fctx->record->uid,
+    r = annotatemore_msg_lookup(fctx->mailbox, fctx->record->uid,
                                 buf_cstring(&fctx->buf), NULL, &attrib);
 
 done:
@@ -3076,9 +3076,9 @@ int propfind_fromdb(const xmlChar *name, xmlNsPtr ns,
                (const char *) ns->href, name);
 
     if (fctx->mbentry && !fctx->record) {
-        r = annotatemore_lookupmask(fctx->mbentry->name,
-                                    buf_cstring(&fctx->buf),
-                                    httpd_userid, &attrib);
+        r = annotatemore_lookupmask_mbe(fctx->mbentry,
+                                        buf_cstring(&fctx->buf),
+                                        httpd_userid, &attrib);
     }
 
     if (r) return HTTP_SERVER_ERROR;
@@ -6629,8 +6629,8 @@ static int dav_post_share(struct transaction_t *txn,
                     int r;
 
                     /* Lookup invite status */
-                    r = annotatemore_lookupmask(txn->req_tgt.mbentry->name,
-                                                annot, userid, &value);
+                    r = annotatemore_lookupmask_mbe(txn->req_tgt.mbentry,
+                                                    annot, userid, &value);
                     if (!r && buf_len(&value)) response = buf_cstring(&value);
                     node = xmlNewNode(ns[NS_DAV], BAD_CAST response);
                     buf_free(&value);
@@ -10087,8 +10087,8 @@ static void xml_add_sharee(const char *userid, void *data, void *rock)
                      buf_cstring(&irock->fctx->buf));
 
         /* Lookup invite status */
-        r = annotatemore_lookupmask(irock->fctx->mbentry->name,
-                                    annot, userid, &value);
+        r = annotatemore_lookupmask_mbe(irock->fctx->mbentry,
+                                        annot, userid, &value);
         if (!r && buf_len(&value)) resp = buf_cstring(&value);
         xmlNewChild(sharee, NULL, BAD_CAST resp, NULL);
         buf_free(&value);
