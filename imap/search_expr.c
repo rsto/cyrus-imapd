@@ -1682,7 +1682,14 @@ static int search_folder_matchguid_cb(const conv_guidrec_t *rec, void *rock)
 {
     if ((rec->system_flags & FLAG_DELETED) ||
         (rec->internal_flags & FLAG_INTERNAL_EXPUNGED)) return 0;
-    return strcmp(rec->mboxname, (const char*)rock) ? 0 : IMAP_OK_COMPLETED;
+
+    mbentry_t *mbentry = NULL;
+    int r = mboxlist_lookup((const char *) rock, &mbentry, NULL);
+    if (r) return 0;
+
+    r = strcmp(rec->mboxid, mbentry->uniqueid) ? 0 : IMAP_OK_COMPLETED;
+    mboxlist_entry_free(&mbentry);
+    return r;
 }
 
 static int search_folder_match(message_t *m, const union search_value *v,
