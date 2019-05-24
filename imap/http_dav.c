@@ -3179,8 +3179,8 @@ static int propfind_fromresource(const xmlChar *name, xmlNsPtr ns,
     buf_printf(&fctx->buf, DAV_ANNOT_NS "<%s>%s",
                (const char *) ns->href, name);
 
-    r = annotatemore_msg_lookup(fctx->mailbox->name, fctx->record->uid,
-                                buf_cstring(&fctx->buf), NULL, &attrib);
+    r = mailbox_annotations_lookup(fctx->mailbox, fctx->record,
+                                   buf_cstring(&fctx->buf), NULL, &attrib);
 
 done:
     if (r) r = HTTP_SERVER_ERROR;

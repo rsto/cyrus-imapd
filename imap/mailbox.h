@@ -640,6 +640,8 @@ extern int mailbox_index_recalc(struct mailbox *mailbox);
         (mailbox->quotaroot ? quota_check_useds((mailbox)->quotaroot, delta) : 0)
 void mailbox_get_usage(struct mailbox *mailbox,
                         quota_t usage[QUOTA_NUMRESOURCES]);
+
+// FIXME remove?
 void mailbox_annot_changed(struct mailbox *mailbox,
                            unsigned int uid,
                            const char *entry,
@@ -648,26 +650,20 @@ void mailbox_annot_changed(struct mailbox *mailbox,
                            const struct buf *newval,
                            int silent);
 
+// FIXME remove?
 extern int mailbox_get_annotate_state(struct mailbox *mailbox,
                                       unsigned int uid,
                                       struct annotate_state **statep);
 
+// FIXME remove?
 extern int mailbox_annotation_write(struct mailbox *mailbox, uint32_t uid,
                                     const char *entry, const char *userid,
                                     const struct buf *value);
 
+// FIXME remove?
 extern int mailbox_annotation_writemask(struct mailbox *mailbox, uint32_t uid,
                                         const char *entry, const char *userid,
                                         const struct buf *value);
-
-extern int mailbox_annotation_lookup(struct mailbox *mailbox, uint32_t uid,
-                                     const char *entry, const char *userid,
-                                     struct buf *value);
-
-
-extern int mailbox_annotation_lookupmask(struct mailbox *mailbox, uint32_t uid,
-                                         const char *entry, const char *userid,
-                                         struct buf *value);
 
 extern struct mailbox_iter *mailbox_iter_init(struct mailbox *mailbox,
                                               modseq_t changedsince,
@@ -697,5 +693,61 @@ extern void mailbox_set_wait_cb(mailbox_wait_cb_t *cb, void *rock);
 extern void mailbox_cleanup_uid(struct mailbox *mailbox, uint32_t uid, const char *flagstr);
 
 extern int mailbox_crceq(struct synccrcs a, struct synccrcs b);
+
+struct annotationlist {
+    char *userid;
+    char *entry;
+    char *value;
+    modseq_t modseq;
+    int tombstone;
+    struct annotationlist *next;
+};
+
+extern void mailbox_annotationlist_free(struct annotationlist **annotsp);
+
+/* Read all annotations on this record */ // FIXME - doc
+extern int mailbox_annotations_readall(struct mailbox *mailbox, const struct index_record *record,
+                                       struct annotationlist **annotsp);
+
+// FIXME - doc
+/* userid MUST NOT be null: "" means shared, otherwise user. doesn't fall back to shared if no annot for this user */
+extern int mailbox_annotations_lookup(struct mailbox *mailbox, const struct index_record *record, 
+                                      const char *entry, const char *userid,
+                                      struct buf *buf);
+
+/* like lookup, but does fall back to shared */
+// FIXME
+extern int mailbox_annotations_lookupmask(struct mailbox *mailbox, const struct index_record *record,
+                                          const char *entry, const char *userid,
+                                          struct buf *buf);
+
+
+
+
+/* Write all annotations on this record. mailbox MUST be write-locked */
+/* bump modseq on mailbox record, unless record.silent. ignore modseq in annotation */
+/* append or rewrite, if recno > 0 */
+// FIXME
+extern int mailbox_store_record(struct mailbox *mailbox,
+                               struct index_record *record,
+                                struct annotationlist *annots);
+
+/* write to shared if userid=="", else userid */
+/* store empty val = delete */
+/* bump modseq on mailbox record, unless record.silent */
+// FIXME
+extern int mailbox_annotations_write(struct mailbox *mailbox,
+                                     struct index_record *record,
+                                      const char *entry, const char *userid,
+                                      struct buf *val);
+
+/* like lookupmask: overwrite shared if mailbox owned by user */
+/* write empty val = delete */
+/* bump modseq on mailbox record, unless record.silent */
+// FIXME
+extern int mailbox_annotations_writemask(struct mailbox *mailbox,
+                                     struct index_record *record,
+                                      const char *entry, const char *userid,
+                                      struct buf *val);
 
 #endif /* INCLUDED_MAILBOX_H */

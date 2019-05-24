@@ -491,52 +491,13 @@ static icalcomponent *vpatch_from_peruserdata(const struct buf *userdata)
     return vpatch;
 }
 
-struct has_alarms_rock {
-    uint32_t mbox_options;
-    int *has_alarms;
-};
-
-static int has_peruser_alarms_cb(const char *mailbox,
-                                 uint32_t uid __attribute__((unused)),
-                                 const char *entry __attribute__((unused)),
-                                 const char *userid, const struct buf *value,
-                                 const struct annotate_metadata *mdata __attribute__((unused)),
-                                 void *rock)
-{
-    struct has_alarms_rock *hrock = (struct has_alarms_rock *) rock;
-    icalcomponent *vpatch, *comp;
-
-    if (!mboxname_userownsmailbox(userid, mailbox) &&
-        ((hrock->mbox_options & OPT_IMAP_SHAREDSEEN) ||
-         mboxlist_checksub(mailbox, userid) != 0)) {
-        /* No per-user-data, or sharee has unsubscribed from this calendar */
-        return 0;
-    }
-        
-    /* Extract VPATCH from per-user-cal-data annotation */
-    vpatch = vpatch_from_peruserdata(value);
-
-    /* Check PATCHes for any VALARMs */
-    for (comp = icalcomponent_get_first_component(vpatch, ICAL_XPATCH_COMPONENT);
-         comp;
-         comp = icalcomponent_get_next_component(vpatch, ICAL_XPATCH_COMPONENT)) {
-        if (icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT)) {
-            *(hrock->has_alarms) = 1;
-            break;
-        }
-    }
-
-    icalcomponent_free(vpatch);
-
-    return 0;
-}
-
-static int has_alarms(icalcomponent *ical, struct mailbox *mailbox, uint32_t uid)
+static int has_alarms(icalcomponent *ical, struct mailbox *mailbox,
+                      const struct index_record *record)
 {
     int has_alarms = 0;
 
     syslog(LOG_DEBUG, "checking for alarms in mailbox %s uid %u",
-           mailbox->name, uid);
+           mailbox->name, record->uid);
 
     if (ical) {
         /* Check iCalendar resource for VALARMs */
@@ -551,12 +512,44 @@ static int has_alarms(icalcomponent *ical, struct mailbox *mailbox, uint32_t uid
     }
 
     /* Check all per-user-cal-data for VALARMs */
-    struct has_alarms_rock hrock = { mailbox->i.options, &has_alarms };
-
     syslog(LOG_DEBUG, "checking per-user-data");
-    mailbox_get_annotate_state(mailbox, uid, NULL);
-    annotatemore_findall(mailbox->name, uid, PER_USER_CAL_DATA, /* modseq */ 0,
-                         &has_peruser_alarms_cb, &hrock, /* flags */ 0);
+    struct annotationlist *annots = NULL;
+    int r = mailbox_annotations_readall(mailbox, record, &annots);
+    if (!r) {
+        struct annotationlist *annot;
+        for (annot = annots; annot; annot = annot->next) {
+            if (strcmpnull(annot->entry, PER_USER_CAL_DATA) ||
+                    annot->tombstone || !annot->value || !annot->userid) {
+                /* Not the annotation we're looking for */
+                continue;
+            }
+            if (!mboxname_userownsmailbox(annot->userid, mailbox->name) &&
+                    ((mailbox->i.options & OPT_IMAP_SHAREDSEEN) ||
+                     mboxlist_checksub(mailbox->name, annot->userid) != 0)) {
+                /* No per-user-data, or sharee has unsubscribed from this calendar */
+                continue;
+            }
+            /* Extract VPATCH from per-user-cal-data annotation */
+            struct buf icalvalue = BUF_INITIALIZER;
+            icalcomponent *vpatch, *comp;
+            buf_init_ro_cstr(&icalvalue, annot->value);
+            vpatch = vpatch_from_peruserdata(&icalvalue);
+            /* Check PATCHes for any VALARMs */
+            for (comp = icalcomponent_get_first_component(vpatch, ICAL_XPATCH_COMPONENT);
+                    comp;
+                    comp = icalcomponent_get_next_component(vpatch, ICAL_XPATCH_COMPONENT)) {
+                if (icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT)) {
+                    has_alarms = 1;
+                    break;
+                }
+            }
+            icalcomponent_free(vpatch);
+            buf_free(&icalvalue);
+            /* Found alarm? */
+            if (has_alarms) break;
+        }
+    }
+    mailbox_annotationlist_free(&annots);
 
     return has_alarms;
 }
@@ -611,9 +604,7 @@ static int read_lastalarm(struct mailbox *mailbox,
 
     const char *annotname = DAV_ANNOT_NS "lastalarm";
     struct buf annot_buf = BUF_INITIALIZER;
-    mailbox_get_annotate_state(mailbox, record->uid, NULL);
-    annotatemore_msg_lookup(mailbox->name, record->uid,
-                            annotname, "", &annot_buf);
+    mailbox_annotations_lookup(mailbox, record, annotname, "", &annot_buf);
 
     if (annot_buf.len &&
         sscanf(buf_cstring(&annot_buf), "%ld %ld",
@@ -636,7 +627,7 @@ EXPORTED int caldav_alarm_add_record(struct mailbox *mailbox,
      * which is done after the annotations are written in sync_support.c */
     if (record->silent) return 0;
 
-    if (has_alarms(ical, mailbox, record->uid))
+    if (has_alarms(ical, mailbox, record))
         update_alarmdb(mailbox->name, record->uid, record->internaldate);
 
     return 0;
@@ -650,7 +641,7 @@ EXPORTED int caldav_alarm_touch_record(struct mailbox *mailbox,
 
     /* if there are alarms in the annotations,
      * the next alarm may have become earlier, so get calalarmd to check again */
-    if (has_alarms(NULL, mailbox, record->uid))
+    if (has_alarms(NULL, mailbox, record))
         return update_alarmdb(mailbox->name, record->uid, record->last_updated);
 
     return 0;
@@ -838,7 +829,7 @@ static void process_one_record(struct mailbox *mailbox, uint32_t imap_uid,
 
     /* check for bogus lastalarm data on record
        which actually shouldn't have it */
-    if (!has_alarms(ical, mailbox, imap_uid)) {
+    if (!has_alarms(ical, mailbox, &record)) {
         syslog(LOG_NOTICE, "removing bogus lastalarm check "
                "for mailbox %s uid %u which has no alarms",
                mailbox->name, imap_uid);
@@ -1014,7 +1005,7 @@ EXPORTED int caldav_alarm_upgrade()
             icalcomponent *ical = record_to_ical(mailbox, record, NULL);
 
             if (ical) {
-                if (has_alarms(ical, mailbox, record->uid)) {
+                if (has_alarms(ical, mailbox, record)) {
                     char *userid = mboxname_to_userid(mailbox->name);
                     time_t nextcheck = process_alarms(mailbox->name, record->uid,
                                                       userid, floatingtz, ical,

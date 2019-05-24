@@ -1079,25 +1079,22 @@ static int caldav_parse_path(const char *path, struct request_target_t *tgt,
 
 static int is_personalized(struct mailbox *mailbox,
                            const struct caldav_data *cdata,
+                           const struct index_record *record,
                            const char *userid, struct buf *userdata)
 {
     if (cdata->comp_flags.shared) {
         /* Lookup per-user calendar data */
-        int r = mailbox_get_annotate_state(mailbox, cdata->dav.imap_uid, NULL);
+        mbname_t *mbname = NULL;
 
-        if (!r) {
-            mbname_t *mbname = NULL;
-
-            if (mailbox->i.options & OPT_IMAP_SHAREDSEEN) {
-                /* No longer using per-user-data - use owner data */
-                mbname = mbname_from_intname(mailbox->name);
-                userid = mbname_userid(mbname);
-            }
-
-            r = mailbox_annotation_lookup(mailbox, cdata->dav.imap_uid,
-                                          PER_USER_CAL_DATA, userid, userdata);
-            mbname_free(&mbname);
+        if (mailbox->i.options & OPT_IMAP_SHAREDSEEN) {
+            /* No longer using per-user-data - use owner data */
+            mbname = mbname_from_intname(mailbox->name);
+            userid = mbname_userid(mbname);
         }
+
+        int r = mailbox_annotations_lookup(mailbox, record, PER_USER_CAL_DATA,
+                                          userid, userdata);
+        mbname_free(&mbname);
 
         if (!r && buf_len(userdata)) return 1;
         buf_free(userdata);
@@ -1125,7 +1122,7 @@ static int caldav_get_validators(struct mailbox *mailbox, void *data,
 
     if ((namespace_calendar.allow & ALLOW_USERDATA) &&
         cdata->dav.imap_uid && cdata->comp_flags.shared &&
-        is_personalized(mailbox, cdata, userid, &userdata)) {
+        is_personalized(mailbox, cdata, record, userid, &userdata)) {
         struct dlist *dl;
 
         /* Parse the userdata and fetch the validators */
@@ -1167,12 +1164,14 @@ static modseq_t caldav_get_modseq(struct mailbox *mailbox,
     struct buf userdata = BUF_INITIALIZER;
     modseq_t modseq = cdata->dav.modseq;
 
-    if ((namespace_calendar.allow & ALLOW_USERDATA) &&
+    struct index_record record;
+    int r = mailbox_find_index_record(mailbox, cdata->dav.imap_uid, &record);
+
+    if (!r && (namespace_calendar.allow & ALLOW_USERDATA) &&
         cdata->comp_flags.shared &&
-        is_personalized(mailbox, cdata, userid, &userdata)) {
+        is_personalized(mailbox, cdata, &record, userid, &userdata)) {
         modseq_t shared_modseq = cdata->dav.modseq;
         struct dlist *dl;
-        int r;
 
         /* Parse the userdata and fetch the modseq */
         dlist_parsemap(&dl, 1, 0, buf_base(&userdata), buf_len(&userdata));
@@ -1181,8 +1180,7 @@ static modseq_t caldav_get_modseq(struct mailbox *mailbox,
         buf_free(&userdata);
 
         /* Lookup shared modseq */
-        r = mailbox_annotation_lookup(mailbox, cdata->dav.imap_uid,
-                                      SHARED_MODSEQ, "", &userdata);
+        r = mailbox_annotations_lookup(mailbox, &record, SHARED_MODSEQ, "", &userdata);
         if (!r && buf_len(&userdata)) {
             sscanf(buf_cstring(&userdata), MODSEQ_FMT, &shared_modseq);
         }
@@ -2588,7 +2586,7 @@ EXPORTED icalcomponent *caldav_record_to_ical(struct mailbox *mailbox,
     if (userid && (namespace_calendar.allow & ALLOW_USERDATA)) {
         struct buf userdata = BUF_INITIALIZER;
 
-        if (is_personalized(mailbox, cdata, httpd_userid, &userdata)) {
+        if (is_personalized(mailbox, cdata, &record, httpd_userid, &userdata)) {
             add_personal_data(ical, &userdata);
         }
 
@@ -2689,7 +2687,7 @@ static int caldav_get(struct transaction_t *txn, struct mailbox *mailbox,
         if (namespace_calendar.allow & ALLOW_USERDATA) {
             struct buf userdata = BUF_INITIALIZER;
 
-            if (is_personalized(mailbox, cdata, httpd_userid, &userdata)) {
+            if (is_personalized(mailbox, cdata, record, httpd_userid, &userdata)) {
                 if (!ical) *obj = ical = record_to_ical(mailbox, record, NULL);
 
                 add_personal_data(ical, &userdata);
@@ -5778,7 +5776,7 @@ static int propfind_caldata(const xmlChar *name, xmlNsPtr ns,
         if (namespace_calendar.allow & ALLOW_USERDATA) {
             struct buf userdata = BUF_INITIALIZER;
 
-            if (is_personalized(fctx->mailbox, fctx->data,
+            if (is_personalized(fctx->mailbox, fctx->data, fctx->record,
                                 httpd_userid, &userdata)) {
                 if (!fctx->obj) fctx->obj = icalparser_parse_string(data);
                 ical = fctx->obj;

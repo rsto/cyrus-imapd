@@ -2035,7 +2035,7 @@ EXPORTED int mailbox_read_basecid(struct mailbox *mailbox, const struct index_re
 
     if (record->internal_flags & FLAG_INTERNAL_SPLITCONVERSATION) {
         struct buf annotval = BUF_INITIALIZER;
-        mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "basethrid", "", &annotval);
+        mailbox_annotations_lookup(mailbox, record, IMAP_ANNOT_NS "basethrid", "", &annotval);
         if (annotval.len == 16) {
             const char *p = buf_cstring(&annotval);
             /* we have a new canonical CID */
@@ -4412,7 +4412,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
         if (mailbox->i.minor_version < 13 && repack->newmailbox.i.minor_version >= 13) {
             /* extract CID */
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "thrid", "", &buf);
+            mailbox_annotations_lookup(mailbox, record, IMAP_ANNOT_NS "thrid", "", &buf);
             if (buf.len == 16) {
                 const char *p = buf_cstring(&buf);
                 parsehex(p, &p, 16, &copyrecord.cid);
@@ -4433,7 +4433,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
         if (mailbox->i.minor_version < 15 && repack->newmailbox.i.minor_version >= 15) {
             /* extract CID */
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "savedate", "", &buf);
+            mailbox_annotations_lookup(mailbox, record, IMAP_ANNOT_NS "savedate", "", &buf);
             if (buf.len) {
                 const char *p = buf_cstring(&buf);
                 bit64 newval;
@@ -4456,7 +4456,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
         if (mailbox->i.minor_version < 16 && repack->newmailbox.i.minor_version >= 16) {
             /* extract CID */
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "createdmodseq", "", &buf);
+            mailbox_annotations_lookup(mailbox, record, IMAP_ANNOT_NS "createdmodseq", "", &buf);
             if (buf.len) {
                 const char *p = buf_cstring(&buf);
                 bit64 newval;
@@ -6869,8 +6869,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags)
 
         if (mailbox->i.minor_version >= 13) {
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "thrid", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "thrid", NULL, &buf);
+            mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "thrid", "", &buf);
+            if (!buf.len) mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "thrid", NULL, &buf);
             if (buf.len) {
                 syslog(LOG_NOTICE, "removing stale thrid for %u", record.uid);
                 printf("removing stale thrid for %u\n", record.uid);
@@ -6882,8 +6882,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags)
 
         if (mailbox->i.minor_version >= 15) {
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "savedate", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "savedate", NULL, &buf);
+            mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "savedate", "", &buf);
+            if (!buf.len) mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "savedate", NULL, &buf);
             if (buf.len) {
                 syslog(LOG_NOTICE, "removing stale savedate for %u", record.uid);
                 printf("removing stale savedate for %u\n", record.uid);
@@ -6895,8 +6895,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags)
 
         if (mailbox->i.minor_version >= 16) {
             buf_reset(&buf);
-            mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "createdmodseq", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "createdmodseq", NULL, &buf);
+            mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "createdmodseq", "", &buf);
+            if (!buf.len) mailbox_annotations_lookup(mailbox, &record, IMAP_ANNOT_NS "createdmodseq", NULL, &buf);
             if (buf.len) {
                 syslog(LOG_NOTICE, "removing stale createdmodseq for %u", record.uid);
                 printf("removing stale createdmodseq for %u\n", record.uid);
@@ -7166,18 +7166,20 @@ done:
     return r;
 }
 
-EXPORTED int mailbox_annotation_lookup(struct mailbox *mailbox, uint32_t uid,
-                                       const char *entry, const char *userid,
-                                       struct buf *value)
+EXPORTED int mailbox_annotations_lookup(struct mailbox *mailbox,
+                                        const struct index_record *record,
+                                        const char *entry, const char *userid,
+                                        struct buf *value)
 {
-    return annotatemore_msg_lookup(mailbox->name, uid, entry, userid, value);
+    return annotatemore_msg_lookup(mailbox->name, record->uid, entry, userid, value);
 }
 
-EXPORTED int mailbox_annotation_lookupmask(struct mailbox *mailbox, uint32_t uid,
-                                           const char *entry, const char *userid,
-                                           struct buf *value)
+EXPORTED int mailbox_annotations_lookupmask(struct mailbox *mailbox,
+                                            const struct index_record *record,
+                                            const char *entry, const char *userid,
+                                            struct buf *value)
 {
-    return annotatemore_msg_lookupmask(mailbox->name, uid, entry, userid, value);
+    return annotatemore_msg_lookupmask(mailbox->name, record->uid, entry, userid, value);
 }
 
 
@@ -7236,3 +7238,63 @@ EXPORTED int mailbox_crceq(struct synccrcs a, struct synccrcs b)
     return 1;
 }
 
+EXPORTED void mailbox_annotationlist_free(struct annotationlist **annotsp)
+{
+    if (!annotsp) return;
+
+    struct annotationlist *annot = *annotsp;
+
+    while (annot) {
+        struct annotationlist *next = annot->next;
+        free(annot->userid);
+        free(annot->entry);
+        free(annot->value);
+        free(annot);
+        annot = next;
+    }
+    *annotsp = NULL;
+}
+
+struct readannots_rock {
+    struct annotationlist *head;
+    struct annotationlist *last;
+};
+
+static int readannots_cb(const char *mailbox __attribute__((unused)),
+                         uint32_t uid __attribute__((unused)),
+                         const char *entry, const char *userid,
+                         const struct buf *value,
+                         const struct annotate_metadata *mdata,
+                         void *vrock)
+{
+    struct readannots_rock *rock = vrock;
+
+    struct annotationlist *annot = xzmalloc(sizeof(struct annotationlist));
+    annot->userid = xstrdupnull(userid);
+    annot->entry = xstrdupnull(entry);
+    annot->value = xstrdup(buf_cstring(value));
+    annot->modseq = mdata->modseq;
+    annot->tombstone = mdata->flags & ANNOTATE_FLAG_DELETED;
+
+    if (rock->last) {
+        rock->last->next = annot;
+        rock->last = annot;
+    }
+    else {
+        rock->head = annot;
+        rock->last = annot;
+    }
+    
+    return 0;
+}
+
+EXPORTED int mailbox_annotations_readall(struct mailbox *mailbox, const struct index_record *record,
+                                         struct annotationlist **annotsp)
+{
+    struct readannots_rock rock = { NULL, NULL };
+    int r = annotatemore_findall(mailbox->name, record->uid, "*", 0,
+                                 readannots_cb, &rock, 0);
+    if (r) mailbox_annotationlist_free(&rock.head);
+    else *annotsp = rock.head;
+    return r;
+}

@@ -4126,8 +4126,8 @@ static int index_fetchreply(struct index_state *state, uint32_t msgno,
         const char *annot = config_getstring(IMAPOPT_JMAP_PREVIEW_ANNOT);
         if (annot && !strncmp(annot, "/shared/", 8)) {
             struct buf previewbuf = BUF_INITIALIZER;
-            annotatemore_msg_lookup(mailbox->name, record.uid, annot+7,
-                                    /*userid*/"", &previewbuf);
+            mailbox_annotations_lookup(mailbox, &record, annot+7,
+                                       /*userid*/"", &previewbuf);
             if (buf_len(&previewbuf) > 256)
                 buf_truncate(&previewbuf, 256); // XXX - utf8 chars
             prot_printastring(state->out, buf_cstring(&previewbuf));
@@ -5977,11 +5977,11 @@ MsgData **index_msgdata_load(struct index_state *state,
             case SORT_ANNOTATION: {
                 struct buf value = BUF_INITIALIZER;
 
-                annotatemore_msg_lookup(state->mboxname,
-                                        record.uid,
-                                        sortcrit[j].args.annot.entry,
-                                        sortcrit[j].args.annot.userid,
-                                        &value);
+                mailbox_annotations_lookup(state->mailbox,
+                                           &record,
+                                           sortcrit[j].args.annot.entry,
+                                           sortcrit[j].args.annot.userid,
+                                           &value);
 
                 /* buf_release() never returns NULL, so if the lookup
                  * fails for any reason we just get an empty string here */
