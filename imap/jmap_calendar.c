@@ -1722,7 +1722,7 @@ static const jmap_property_t event_props[] = {
         0
     },
     {
-        "isAllDay",
+        "showWithoutTime",
         NULL,
         0
     },
