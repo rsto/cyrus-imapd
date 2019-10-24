@@ -72,6 +72,8 @@
 #include "util.h"
 #include "xmalloc.h"
 
+#include <sasl/saslutil.h>
+
 /* generated headers are not necessarily in current directory */
 #include "imap/http_err.h"
 #include "imap/imap_err.h"
@@ -84,6 +86,9 @@ static int jmap_calendarevent_changes(struct jmap_req *req);
 static int jmap_calendarevent_query(struct jmap_req *req);
 static int jmap_calendarevent_set(struct jmap_req *req);
 static int jmap_calendarevent_copy(struct jmap_req *req);
+
+static int jmap_calendarevent_getblob(jmap_req_t *req, const char *blobid,
+                                      const char *accept, struct buf *blob);
 
 #define JMAPCACHE_CALVERSION 19
 
@@ -160,6 +165,8 @@ HIDDEN void jmap_calendar_init(jmap_settings_t *settings)
             hash_insert(mp->name, mp, &settings->methods);
         }
     }
+
+    ptrarray_append(&settings->getblob_handlers, jmap_calendarevent_getblob);
 }
 
 HIDDEN void jmap_calendar_capabilities(json_t *account_capabilities)
@@ -1392,6 +1399,49 @@ done:
     return r;
 }
 
+static int jmap_calendarevent_getblob(jmap_req_t *req,
+                                      const char *blobid,
+                                      const char *accept __attribute__((unused)),
+                                      struct buf *blob)
+{
+
+    if (*blobid != 'C') return 0;
+
+    int res = 0;
+    size_t blobidlen = strlen(blobid);
+    char *uid = xzmalloc(blobidlen); // more than enough
+    struct caldav_db *db = NULL;
+    struct caldav_data *cdata = NULL;
+
+    if (sasl_decode64(blobid+1, blobidlen-1, buf, blobidlen) != SASL_OK) {
+        /* incomplete or incorrect blobid */
+        req->txn->error.desc = "invalid calendar blobid";
+        res = HTTP_BAD_REQUEST;
+        goto done;
+    }
+
+    db = caldav_open_userid(req->accountid);
+    if (!db) {
+        req->txn->error.desc = "no calendar db";
+        res = HTTP_SERVER_ERROR;
+        goto done;
+    }
+
+    int r = caldav_lookup_uid(db, uid, &cdata);
+
+
+
+
+
+    // FIXME
+    assert(req);
+    assert(blob);
+done:
+    if (db) caldav_close(db);
+    free(uid);
+    return res;
+}
+
 struct event_id {
     const char *raw; /* as requested by client */
     char *uid;
@@ -1694,6 +1744,18 @@ gotevent:
         json_object_set_new(jsevent, "calendarId",
                             json_string(strrchr(cdata->dav.mailbox, '.')+1));
     }
+    if (jmap_wantprop(rock->get->props, "blobId")) {
+        size_t uidlen = strlen(cdata->ical_uid);
+        size_t b64len = ((uidlen + 2) / 3) << 2;
+        char *buf = xzmalloc(b64len + 2);
+        unsigned outlen = 0;
+        buf[0] = 'C';
+        int saslret = sasl_encode64(cdata->ical_uid, uidlen, buf+1,
+                                    b64len + 1, &outlen);
+        json_object_set_new(jsevent, "blobId",
+                saslret == SASL_OK ? json_string(buf) : json_null());
+        free(buf);
+    }
 
     if (rock->want_eventids == NULL) {
         /* Client requested all events */
@@ -1917,6 +1979,11 @@ static const jmap_property_t event_props[] = {
         "x-href",
         JMAP_CALENDARS_EXTENSION,
         0
+    },
+    {
+        "blobId",
+        JMAP_CALENDARS_EXTENSION,
+        JMAP_PROP_SERVER_SET | JMAP_PROP_SKIP_GET
     },
     { NULL, NULL, 0 }
 };
