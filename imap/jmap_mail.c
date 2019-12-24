@@ -461,6 +461,17 @@ struct headers {
     struct buf buf;
 };
 
+enum header_form {
+    HEADER_FORM_UNKNOWN          = 0, /* MUST be zero so we can cast to void* */
+    HEADER_FORM_RAW              = 1 << 0,
+    HEADER_FORM_TEXT             = 1 << 1,
+    HEADER_FORM_ADDRESSES        = 1 << 2,
+    HEADER_FORM_GROUPEDADDRESSES = 1 << 3,
+    HEADER_FORM_MESSAGEIDS       = 1 << 4,
+    HEADER_FORM_DATE             = 1 << 5,
+    HEADER_FORM_URLS             = 1 << 6
+};
+
 #define HEADERS_INITIALIZER \
     { json_array(), json_object(), BUF_INITIALIZER }
 
@@ -543,7 +554,7 @@ static void _headers_from_mime(const char *base, size_t len, struct headers *hea
     message_foreach_header(base, len, _headers_from_mime_cb, headers);
 }
 
-static json_t *_header_as_raw(const char *raw)
+static json_t *_header_as_raw(const char *raw, enum header_form form __attribute__((unused)))
 {
     if (!raw) return json_null();
     size_t len = strlen(raw);
@@ -551,7 +562,7 @@ static json_t *_header_as_raw(const char *raw)
     return json_stringn(raw, len);
 }
 
-static json_t *_header_as_date(const char *raw)
+static json_t *_header_as_date(const char *raw, enum header_form form __attribute__((unused)))
 {
     if (!raw) return json_null();
 
@@ -570,7 +581,7 @@ static json_t *_header_as_date(const char *raw)
     return json_string(cbuf);
 }
 
-static json_t *_header_as_text(const char *raw)
+static json_t *_header_as_text(const char *raw, enum header_form form __attribute__((unused)))
 {
     if (!raw) return json_null();
 
@@ -612,7 +623,7 @@ static void _remove_ws(char *s)
     } while ((*d++ = *s++));
 }
 
-static json_t *_header_as_messageids(const char *raw)
+static json_t *_header_as_messageids(const char *raw, enum header_form form __attribute__((unused)))
 {
     if (!raw) return json_null();
     json_t *msgids = json_array();
@@ -664,79 +675,110 @@ static json_t *_header_as_messageids(const char *raw)
     return msgids;
 }
 
-static json_t *_emailaddresses_from_addr(struct address *addr)
+static json_t *_emailaddresses_from_addr(struct address *addr, enum header_form form)
 {
     if (!addr) return json_null();
 
-    json_t *addresses = json_array();
-    struct buf buf = BUF_INITIALIZER;
+    json_t *result = json_array();
 
+    const char *groupname = NULL;
+    json_t *addresses = json_array();
+
+    struct buf buf = BUF_INITIALIZER;
     while (addr) {
         const char *domain = addr->domain;
         if (!strcmpsafe(domain, "unspecified-domain")) {
             domain = NULL;
         }
-
         if (!addr->name && addr->mailbox && !domain) {
-            /* That's a group. Ignore. */
-            addr = addr->next;
-            continue;
-        }
-
-        if (!addr->name && !addr->mailbox) {
-            addr = addr->next;
-            continue;
-        }
-
-        /* It's a legit EmailAddress */
-        json_t *jemailaddr = json_pack("{}");
-
-        /* name */
-        if (addr->name) {
-            char *tmp = _decode_mimeheader(addr->name);
-            if (tmp) json_object_set_new(jemailaddr, "name", json_string(tmp));
-            free(tmp);
-        } else {
-            json_object_set_new(jemailaddr, "name", json_null());
-        }
-        /* email */
-        if (addr->mailbox) {
-            buf_setcstr(&buf, addr->mailbox);
-            if (domain) {
-                buf_putc(&buf, '@');
-                buf_appendcstr(&buf, domain);
+            /* Start of group. */
+            if (form == HEADER_FORM_GROUPEDADDRESSES) {
+                if (form == HEADER_FORM_GROUPEDADDRESSES) {
+                    if (groupname || json_array_size(addresses)) {
+                        json_t *group = json_object();
+                        json_object_set_new(group, "name",
+                                groupname ? json_string(groupname) : json_null());
+                        json_object_set_new(group, "addresses", addresses);
+                        json_array_append_new(result, group);
+                        addresses = json_array();
+                    }
+                    groupname = NULL;
+                }
+                groupname = addr->mailbox;
             }
-            json_object_set_new(jemailaddr, "email", json_string(buf_cstring(&buf)));
-            buf_reset(&buf);
-        } else {
-            json_object_set_new(jemailaddr, "email", json_null());
         }
-
-        json_array_append_new(addresses, jemailaddr);
+        else if (!addr->name && !addr->mailbox) {
+            /* End of group */
+            if (form == HEADER_FORM_GROUPEDADDRESSES) {
+                if (groupname || json_array_size(addresses)) {
+                    json_t *group = json_object();
+                    json_object_set_new(group, "name",
+                            groupname ? json_string(groupname) : json_null());
+                    json_object_set_new(group, "addresses", addresses);
+                    json_array_append_new(result, group);
+                    addresses = json_array();
+                }
+                groupname = NULL;
+            }
+        }
+        else {
+            /* Regular address */
+            json_t *jemailaddr = json_pack("{}");
+            if (addr->name) {
+                char *tmp = _decode_mimeheader(addr->name);
+                if (tmp) json_object_set_new(jemailaddr, "name", json_string(tmp));
+                free(tmp);
+            } else {
+                json_object_set_new(jemailaddr, "name", json_null());
+            }
+            if (addr->mailbox) {
+                buf_setcstr(&buf, addr->mailbox);
+                if (domain) {
+                    buf_putc(&buf, '@');
+                    buf_appendcstr(&buf, domain);
+                }
+                json_object_set_new(jemailaddr, "email", json_string(buf_cstring(&buf)));
+                buf_reset(&buf);
+            } else {
+                json_object_set_new(jemailaddr, "email", json_null());
+            }
+            json_array_append_new(addresses, jemailaddr);
+        }
         addr = addr->next;
     }
-
-    if (!json_array_size(addresses)) {
-        json_decref(addresses);
-        addresses = json_null();
-    }
     buf_free(&buf);
-    return addresses;
+
+    if (form == HEADER_FORM_GROUPEDADDRESSES) {
+        if (groupname || json_array_size(addresses)) {
+            json_t *group = json_object();
+            json_object_set_new(group, "name",
+                    groupname ? json_string(groupname) : json_null());
+            json_object_set_new(group, "addresses", addresses);
+            json_array_append_new(result, group);
+        }
+        else json_decref(addresses);
+    }
+    else {
+        json_decref(result);
+        result = addresses;
+    }
+
+    return result;
 }
 
 
-static json_t *_header_as_addresses(const char *raw)
+static json_t *_header_as_addresses(const char *raw, enum header_form form)
 {
     if (!raw) return json_null();
 
     struct address *addrs = NULL;
     parseaddr_list(raw, &addrs);
-    json_t *result = _emailaddresses_from_addr(addrs);
+    json_t *result = _emailaddresses_from_addr(addrs, form);
     parseaddr_free(addrs);
     return result;
 }
 
-static json_t *_header_as_urls(const char *raw)
+static json_t *_header_as_urls(const char *raw, enum header_form form __attribute__((unused)))
 {
     if (!raw) return json_null();
 
@@ -763,21 +805,11 @@ static json_t *_header_as_urls(const char *raw)
     return urls;
 }
 
-enum _header_form {
-    HEADER_FORM_UNKNOWN = 0, /* MUST be zero so we can cast to void* */
-    HEADER_FORM_RAW,
-    HEADER_FORM_TEXT,
-    HEADER_FORM_ADDRESSES,
-    HEADER_FORM_MESSAGEIDS,
-    HEADER_FORM_DATE,
-    HEADER_FORM_URLS
-};
-
 struct header_prop {
     char *lcasename;
     char *name;
     const char *prop;
-    enum _header_form form;
+    enum header_form form;
     int all;
 };
 
@@ -798,7 +830,7 @@ static struct header_prop *_header_parseprop(const char *s)
     strarray_t *fields = strarray_split(s + 7, ":", 0);
     const char *f0, *f1, *f2;
     int is_valid = 1;
-    enum _header_form form = HEADER_FORM_RAW;
+    enum header_form form = HEADER_FORM_RAW;
     char *lcasename = NULL, *name = NULL;
 
     /* Initialize allowed header forms by lower-case header name. Any
@@ -810,33 +842,87 @@ static struct header_prop *_header_parseprop(const char *s)
     if (allowed_header_forms.size == 0) {
         /* TODO initialize with all headers in RFC5322 and RFC2369 */
         construct_hash_table(&allowed_header_forms, 32, 0);
-        hash_insert("bcc", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("cc", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("content-type", (void*) HEADER_FORM_RAW, &allowed_header_forms);
-        hash_insert("comment", (void*) HEADER_FORM_TEXT, &allowed_header_forms);
-        hash_insert("date", (void*) HEADER_FORM_DATE, &allowed_header_forms);
-        hash_insert("from", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("in-reply-to", (void*) HEADER_FORM_MESSAGEIDS, &allowed_header_forms);
-        hash_insert("list-archive", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("list-help", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("list-owner", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("list-post", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("list-subscribe", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("list-unsubscribe", (void*) HEADER_FORM_URLS, &allowed_header_forms);
-        hash_insert("message-id", (void*) HEADER_FORM_MESSAGEIDS, &allowed_header_forms);
-        hash_insert("references", (void*) HEADER_FORM_MESSAGEIDS, &allowed_header_forms);
-        hash_insert("reply-to", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-date", (void*) HEADER_FORM_DATE, &allowed_header_forms);
-        hash_insert("resent-from", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-message-id", (void*) HEADER_FORM_MESSAGEIDS, &allowed_header_forms);
-        hash_insert("resent-reply-to", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-sender", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-to", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-cc", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("resent-bcc", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("sender", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
-        hash_insert("subject", (void*) HEADER_FORM_TEXT, &allowed_header_forms);
-        hash_insert("to", (void*) HEADER_FORM_ADDRESSES, &allowed_header_forms);
+        hash_insert("bcc",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("cc",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("content-type",
+                (void*) HEADER_FORM_RAW,
+                &allowed_header_forms);
+        hash_insert("comment",
+                (void*) HEADER_FORM_TEXT,
+                &allowed_header_forms);
+        hash_insert("date",
+                (void*) HEADER_FORM_DATE,
+                &allowed_header_forms);
+        hash_insert("from",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("in-reply-to",
+                (void*) HEADER_FORM_MESSAGEIDS,
+                &allowed_header_forms);
+        hash_insert("list-archive",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("list-help",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("list-owner",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("list-post",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("list-subscribe",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("list-unsubscribe",
+                (void*) HEADER_FORM_URLS,
+                &allowed_header_forms);
+        hash_insert("message-id",
+                (void*) HEADER_FORM_MESSAGEIDS,
+                &allowed_header_forms);
+        hash_insert("references",
+                (void*) HEADER_FORM_MESSAGEIDS,
+                &allowed_header_forms);
+        hash_insert("reply-to",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-date",
+                (void*) HEADER_FORM_DATE,
+                &allowed_header_forms);
+        hash_insert("resent-from",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-message-id",
+                (void*) HEADER_FORM_MESSAGEIDS,
+                &allowed_header_forms);
+        hash_insert("resent-reply-to",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-sender",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-to",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-cc",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("resent-bcc",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("sender",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
+        hash_insert("subject",
+                (void*) HEADER_FORM_TEXT,
+                &allowed_header_forms);
+        hash_insert("to",
+                (void*) (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES),
+                &allowed_header_forms);
     }
 
     /* Parse property string into fields */
@@ -871,6 +957,8 @@ static struct header_prop *_header_parseprop(const char *s)
             form = HEADER_FORM_TEXT;
         else if (!strcmp(f1, "asAddresses"))
             form = HEADER_FORM_ADDRESSES;
+        else if (!strcmp(f1, "asGroupedAddresses"))
+            form = HEADER_FORM_GROUPEDADDRESSES;
         else if (!strcmp(f1, "asMessageIds"))
             form = HEADER_FORM_MESSAGEIDS;
         else if (!strcmp(f1, "asDate"))
@@ -883,9 +971,9 @@ static struct header_prop *_header_parseprop(const char *s)
 
     /* Validate requested header form */
     if (is_valid && form != HEADER_FORM_RAW) {
-        enum _header_form allowed_form = (enum _header_form) \
+        enum header_form allowed_form = (enum header_form) \
                                          hash_lookup(lcasename, &allowed_header_forms);
-        if (allowed_form != HEADER_FORM_UNKNOWN && form != allowed_form) {
+        if (allowed_form != HEADER_FORM_UNKNOWN && !(form & allowed_form)) {
             is_valid = 0;
         }
     }
@@ -4686,7 +4774,7 @@ static int _cyrusmsg_get_headers(struct cyrusmsg *msg,
 static json_t * _email_get_header(struct cyrusmsg *msg,
                                   const struct body *part,
                                   const char *lcasename,
-                                  enum _header_form want_form,
+                                  enum header_form want_form,
                                   int want_all)
 {
     if (!part) {
@@ -4701,31 +4789,31 @@ static json_t * _email_get_header(struct cyrusmsg *msg,
         json_t *jval = NULL;
         if (!strcmp("messageId", lcasename)) {
             jval = want_form == HEADER_FORM_MESSAGEIDS ?
-                _header_as_messageids(part->message_id) : json_null();
+                _header_as_messageids(part->message_id, want_form) : json_null();
         }
         else if (!strcmp("inReplyTo", lcasename)) {
             jval = want_form == HEADER_FORM_MESSAGEIDS ?
-                _header_as_messageids(part->in_reply_to) : json_null();
+                _header_as_messageids(part->in_reply_to, want_form) : json_null();
         }
         if (!strcmp("subject", lcasename)) {
             jval = want_form == HEADER_FORM_TEXT ?
-                _header_as_text(part->subject) : json_null();
+                _header_as_text(part->subject, want_form) : json_null();
         }
         if (!strcmp("from", lcasename)) {
-            jval = want_form == HEADER_FORM_ADDRESSES ?
-                _emailaddresses_from_addr(part->from) : json_null();
+            jval = want_form & (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES) ?
+                _emailaddresses_from_addr(part->from, want_form) : json_null();
         }
         else if (!strcmp("to", lcasename)) {
-            jval = want_form == HEADER_FORM_ADDRESSES ?
-                _emailaddresses_from_addr(part->to) : json_null();
+            jval = want_form & (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES) ?
+                _emailaddresses_from_addr(part->to, want_form) : json_null();
         }
         else if (!strcmp("cc", lcasename)) {
-            jval = want_form == HEADER_FORM_ADDRESSES ?
-                _emailaddresses_from_addr(part->cc) : json_null();
+            jval = want_form & (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES) ?
+                _emailaddresses_from_addr(part->cc, want_form) : json_null();
         }
         else if (!strcmp("bcc", lcasename)) {
-            jval = want_form == HEADER_FORM_ADDRESSES ?
-                _emailaddresses_from_addr(part->bcc) : json_null();
+            jval = want_form & (HEADER_FORM_ADDRESSES|HEADER_FORM_GROUPEDADDRESSES) ?
+                _emailaddresses_from_addr(part->bcc, want_form) : json_null();
         }
         else if (!strcmp("sentAt", lcasename)) {
             jval = json_null();
@@ -4742,7 +4830,7 @@ static json_t * _email_get_header(struct cyrusmsg *msg,
     }
 
     /* Determine header form converter */
-    json_t* (*conv)(const char *raw);
+    json_t* (*conv)(const char *raw, enum header_form want_form);
     switch (want_form) {
         case HEADER_FORM_TEXT:
             conv = _header_as_text;
@@ -4751,6 +4839,7 @@ static json_t * _email_get_header(struct cyrusmsg *msg,
             conv = _header_as_date;
             break;
         case HEADER_FORM_ADDRESSES:
+        case HEADER_FORM_GROUPEDADDRESSES:
             conv = _header_as_addresses;
             break;
         case HEADER_FORM_MESSAGEIDS:
@@ -4773,7 +4862,7 @@ static json_t * _email_get_header(struct cyrusmsg *msg,
         int r = message_get_field(msg->_m, lcasename, MESSAGE_RAW|MESSAGE_LAST, &buf);
         if (r) return json_null();
         json_t *jval = NULL;
-        if (buf_len(&buf)) jval = conv(buf_cstring(&buf));
+        if (buf_len(&buf)) jval = conv(buf_cstring(&buf), want_form);
         buf_free(&buf);
         if (jval) return jval;
     }
@@ -4796,14 +4885,14 @@ static json_t * _email_get_header(struct cyrusmsg *msg,
         for (i = 0; i < json_array_size(jheaders); i++) {
             json_t *jheader = json_array_get(jheaders, i);
             json_t *jheaderval = json_object_get(jheader, "value");
-            json_array_append_new(allvals, conv(json_string_value(jheaderval)));
+            json_array_append_new(allvals, conv(json_string_value(jheaderval), want_form));
         }
         return allvals;
     }
 
     json_t *jheader = json_array_get(jheaders, json_array_size(jheaders) - 1);
     json_t *jheaderval = json_object_get(jheader, "value");
-    return conv(json_string_value(jheaderval));
+    return conv(json_string_value(jheaderval), want_form);
 }
 
 static int _email_get_meta(jmap_req_t *req,
@@ -5039,37 +5128,37 @@ static int _email_get_headers(jmap_req_t *req __attribute__((unused)),
     /* messageId */
     if (jmap_wantprop(props, "messageId")) {
         json_object_set_new(email, "messageId",
-                _header_as_messageids(part->message_id));
+                _header_as_messageids(part->message_id, HEADER_FORM_MESSAGEIDS));
     }
     /* inReplyTo */
     if (jmap_wantprop(props, "inReplyTo")) {
         json_object_set_new(email, "inReplyTo",
-                _header_as_messageids(part->in_reply_to));
+                _header_as_messageids(part->in_reply_to, HEADER_FORM_MESSAGEIDS));
     }
     /* from */
     if (jmap_wantprop(props, "from")) {
         json_object_set_new(email, "from",
-                _emailaddresses_from_addr(part->from));
+                _emailaddresses_from_addr(part->from, HEADER_FORM_ADDRESSES));
     }
     /* to */
     if (jmap_wantprop(props, "to")) {
         json_object_set_new(email, "to",
-                _emailaddresses_from_addr(part->to));
+                _emailaddresses_from_addr(part->to, HEADER_FORM_ADDRESSES));
     }
     /* cc */
     if (jmap_wantprop(props, "cc")) {
         json_object_set_new(email, "cc",
-                _emailaddresses_from_addr(part->cc));
+                _emailaddresses_from_addr(part->cc, HEADER_FORM_ADDRESSES));
     }
     /* bcc */
     if (jmap_wantprop(props, "bcc")) {
         json_object_set_new(email, "bcc",
-                _emailaddresses_from_addr(part->bcc));
+                _emailaddresses_from_addr(part->bcc, HEADER_FORM_ADDRESSES));
     }
     /* subject */
     if (jmap_wantprop(props, "subject")) {
         json_object_set_new(email, "subject",
-                _header_as_text(part->subject));
+                _header_as_text(part->subject, HEADER_FORM_TEXT));
     }
     /* sentAt */
     if (jmap_wantprop(props, "sentAt")) {
@@ -6902,6 +6991,8 @@ static json_t *_header_from_addresses(json_t *addrs,
         jmap_parser_invalid(parser, prop_name);
         return NULL;
     }
+
+    // FIXME add support for GroupedAddresses
 
     size_t i;
     json_t *addr;
