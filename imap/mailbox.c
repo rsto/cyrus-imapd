@@ -3350,7 +3350,7 @@ static int mailbox_update_caldav(struct mailbox *mailbox,
         else if (!new->silent) {
             /* make sure record is up to date - see add below for description of
              * why we don't touch silent records */
-            caldav_alarm_touch_record(mailbox, new);
+            caldav_alarm_touch_record(mailbox, new, 0);
         }
 
         /* just a flags update to an existing record */
@@ -3602,7 +3602,7 @@ static int mailbox_update_email_alarms(struct mailbox *mailbox,
 
     /* touch or create otherwise */
     else if (old && (old->uid == new->uid)) {
-        r = caldav_alarm_touch_record(mailbox, new);
+        r = caldav_alarm_touch_record(mailbox, new, 0);
     }
     else {
         r = caldav_alarm_add_record(mailbox, new, NULL);
