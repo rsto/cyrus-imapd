@@ -5633,6 +5633,57 @@ EXPORTED void index_text_extractor_destroy(void)
     index_text_extractor = NULL;
 }
 
+static int sniff_html(struct buf *data)
+{
+    // Based on Mozilla's nsUnknownDecoder::SniffForHTML implementation:
+    // https://dxr.mozilla.org/mozilla-central/source/netwerk/streamconv/converters/nsUnknownDecoder.cpp#562
+
+    // FIXME license?
+
+    const char *str = buf_base(data);
+    const char *end = buf_base(data) + buf_len(data);
+
+    // skip leading whitespace
+    while (str != end && isspace(*str)) {
+        ++str;
+    }
+
+    // did we find something like a start tag?
+    if (str == end || *str != '<' || ++str == end) {
+        return 0;
+    }
+
+    // If we seem to be SGML or XML and we got down here, just pretend we're HTML
+    if (*str == '!' || *str == '?') {
+        return 1;
+    }
+
+    size_t bufsize = end - str;
+    // We use sizeof(_tagstr) below because that's the length of _tagstr
+    // with the one char " " or ">" appended.
+#define MATCHES_TAG(_tagstr)                                  \
+    (bufsize >= sizeof(_tagstr) &&                              \
+     (strncasecmp(str, _tagstr " ", sizeof(_tagstr)) == 0 || \
+      strncasecmp(str, _tagstr ">", sizeof(_tagstr)) == 0))
+
+    if (MATCHES_TAG("html") || MATCHES_TAG("frameset") || MATCHES_TAG("body") ||
+        MATCHES_TAG("head") || MATCHES_TAG("script") || MATCHES_TAG("iframe") ||
+        MATCHES_TAG("a") || MATCHES_TAG("img") || MATCHES_TAG("table") ||
+        MATCHES_TAG("title") || MATCHES_TAG("link") || MATCHES_TAG("base") ||
+        MATCHES_TAG("style") || MATCHES_TAG("div") || MATCHES_TAG("p") ||
+        MATCHES_TAG("font") || MATCHES_TAG("applet") || MATCHES_TAG("meta") ||
+        MATCHES_TAG("center") || MATCHES_TAG("form") || MATCHES_TAG("isindex") ||
+        MATCHES_TAG("h1") || MATCHES_TAG("h2") || MATCHES_TAG("h3") ||
+        MATCHES_TAG("h4") || MATCHES_TAG("h5") || MATCHES_TAG("h6") ||
+        MATCHES_TAG("b") || MATCHES_TAG("pre")) {
+        return 1;
+    }
+
+#undef MATCHES_TAG
+
+    return 0;
+}
+
 
 static int getsearchtext_cb(int isbody, charset_t charset, int encoding,
                             const char *type, const char *subtype,
@@ -5725,9 +5776,18 @@ static int getsearchtext_cb(int isbody, charset_t charset, int encoding,
         }
         else {
             /* body-like */
+            const char *mysubtype = subtype;
+            int mycharset_flags = str->charset_flags;
+            if (!strcmpsafe(subtype, "PLAIN")) {
+                /* Try to detect HTML in plain text parts. */
+                if (sniff_html(data)) {
+                    mycharset_flags &= ~(CHARSET_SKIPHTML|CHARSET_KEEPHTML);
+                    mysubtype = "HTML";
+                }
+            }
             str->receiver->begin_part(str->receiver, SEARCH_PART_BODY, content_guid);
-            charset_extract(extract_cb, str, data, charset, encoding, subtype,
-                            str->charset_flags);
+            charset_extract(extract_cb, str, data, charset, encoding, mysubtype,
+                            mycharset_flags);
             str->receiver->end_part(str->receiver, SEARCH_PART_BODY);
         }
     }
