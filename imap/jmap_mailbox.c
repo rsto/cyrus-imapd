@@ -2245,6 +2245,7 @@ static void _mbox_create(jmap_req_t *req, struct mboxset_args *args,
     mbentry_t *mbinbox = NULL, *mbentry = NULL;
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
     struct mailbox *mailbox = NULL;
+    struct buf buf = BUF_INITIALIZER;
 
     char *inboxname = mboxname_user_mbox(req->accountid, NULL);
     jmap_mboxlist_lookup(inboxname, &mbinbox, NULL);
@@ -2314,6 +2315,27 @@ static void _mbox_create(jmap_req_t *req, struct mboxset_args *args,
         goto done;
     }
     r = 0;
+
+    if (args->role.specialuse && args->role.specialuse[0]) {
+        /* Check if a mailbox with this role already exists */
+        r = specialuse_validate(mboxname, req->userid, 0, args->role.specialuse, &buf);
+        if (r) {
+            if (mode == _MBOXSET_SKIP) {
+                result->skipped = 1;
+                syslog(LOG_ERR, "XXXXXXX %s:%d: skipped %s", __func__, __LINE__, mboxname);
+            }
+            else {
+                jmap_parser_invalid(&parser, "role");
+            }
+            r = 0;
+            goto done;
+        }
+        if (strcmp(args->role.specialuse, buf_cstring(&buf))) {
+            free(args->role.specialuse);
+            args->role.specialuse = buf_release(&buf);
+        }
+        buf_reset(&buf);
+    }
 
     /* Create mailbox */
     uint32_t options = 0;
@@ -2390,6 +2412,7 @@ done:
     mboxlist_entry_free(&mbinbox);
     mboxlist_entry_free(&mbentry);
     jmap_parser_fini(&parser);
+    buf_free(&buf);
 }
 
 static int _mbox_update_validate_serverset(jmap_req_t *req,
@@ -2469,6 +2492,7 @@ static void _mbox_update(jmap_req_t *req, struct mboxset_args *args,
     int r = 0;
     mbentry_t *mbinbox = NULL, *mbparent = NULL, *mbentry = NULL;
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
+    struct buf buf = BUF_INITIALIZER;
 
     char *inboxname = mboxname_user_mbox(req->accountid, NULL);
     jmap_mboxlist_lookup(inboxname, &mbinbox, NULL);
@@ -2498,6 +2522,28 @@ static void _mbox_update(jmap_req_t *req, struct mboxset_args *args,
 
     /* Validate server-set properties */
     _mbox_update_validate_serverset(req, args, &parser, mbentry);
+
+    if (args->role.specialuse && args->role.specialuse[0]) {
+        /* Check if a mailbox with this role already exists */
+        r = specialuse_validate(mbentry->name, req->userid, 0,
+                                args->role.specialuse, &buf);
+        if (r) {
+            if (mode == _MBOXSET_SKIP) {
+                result->skipped = 1;
+                syslog(LOG_ERR, "XXXXXXX %s:%d: skipped %s", __func__, __LINE__, mbentry->name);
+            }
+            else {
+                jmap_parser_invalid(&parser, "role");
+            }
+            r = 0;
+            goto done;
+        }
+        if (strcmp(args->role.specialuse, buf_cstring(&buf))) {
+            free(args->role.specialuse);
+            args->role.specialuse = buf_release(&buf);
+        }
+        buf_reset(&buf);
+    }
 
     /* Determine current mailbox and parent names */
     char *oldmboxname = NULL;
@@ -2766,6 +2812,7 @@ done:
     mboxlist_entry_free(&mbinbox);
     mboxlist_entry_free(&mbparent);
     mboxlist_entry_free(&mbentry);
+    buf_free(&buf);
 }
 
 static void _mbox_destroy(jmap_req_t *req, const char *mboxid, int remove_msgs,
@@ -2834,6 +2881,9 @@ static void _mbox_destroy(jmap_req_t *req, const char *mboxid, int remove_msgs,
                 req->userid, req->authstate, mboxevent,
                 1 /* checkacl */, 0 /* local_only */, 0 /* force */,
                 1 /* keep_intermediaries */);
+        if (r == IMAP_MAILBOX_SPECIALUSE) {
+            result->err = json_pack("{s:s:}", "type", "mailboxHasRole"); // FIXME non-standard
+        }
     }
     else {
         r = mboxlist_deletemailbox(mbentry->name,
@@ -2841,6 +2891,9 @@ static void _mbox_destroy(jmap_req_t *req, const char *mboxid, int remove_msgs,
                 req->userid, req->authstate, mboxevent,
                 1 /* checkacl */, 0 /* local_only */, 0 /* force */,
                 1 /* keep_intermediaries */);
+        if (r == IMAP_MAILBOX_SPECIALUSE) {
+            result->err = json_pack("{s:s:}", "type", "mailboxHasRole"); // FIXME non-standard
+        }
     }
     mboxevent_free(&mboxevent);
 
@@ -3432,15 +3485,19 @@ static void _mboxset(jmap_req_t *req, struct mboxset *set)
 
     /* Apply Mailbox/set operations */
     if (ops->is_cyclic) {
+        syslog(LOG_ERR, "XXXXXXXXX %s:%d", __func__, __LINE__);
         _mboxset_run(req, set, ops, _MBOXSET_FAIL, &update_intermediaries);
     }
     else {
+        syslog(LOG_ERR, "XXXXXXXXX %s:%d", __func__, __LINE__);
         _mboxset_run(req, set, ops, _MBOXSET_SKIP, &update_intermediaries);
         if (ptrarray_size(ops->put) || strarray_size(ops->del)) {
             if (_mboxset_state_is_valid(req, ops)) {
+                syslog(LOG_ERR, "XXXXXXXXX %s:%d", __func__, __LINE__);
                 _mboxset_run(req, set, ops, _MBOXSET_TMPNAME, &update_intermediaries);
             }
             else {
+                syslog(LOG_ERR, "XXXXXXXXX %s:%d", __func__, __LINE__);
                 _mboxset_run(req, set, ops, _MBOXSET_FAIL, &update_intermediaries);
             }
         }
