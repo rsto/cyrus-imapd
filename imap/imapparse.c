@@ -882,6 +882,12 @@ static int get_search_criterion(struct protstream *pin,
             if (c == EOF) goto missingarg;
             string_match(parent, arg.s, "attachmentname", base);
         }
+        else if (!strcmp(criteria.s, "attachmentbody")) {  /* nonstandard */
+            if (c != ' ') goto missingarg;
+            c = getastring(pin, pout, &arg);
+            if (c == EOF) goto missingarg;
+            string_match(parent, arg.s, "attachmentbody", base);
+        }
         else goto badcri;
         break;
 
