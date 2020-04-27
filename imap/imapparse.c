@@ -876,6 +876,12 @@ static int get_search_criterion(struct protstream *pin,
             e->attr = search_attr_find("annotation");
             e->value.annot = annot;
         }
+        else if (!strcmp(criteria.s, "attachmentname")) {  /* nonstandard */
+            if (c != ' ') goto missingarg;
+            c = getastring(pin, pout, &arg);
+            if (c == EOF) goto missingarg;
+            string_match(parent, arg.s, "attachmentname", base);
+        }
         else goto badcri;
         break;
 
@@ -1312,13 +1318,7 @@ static int get_search_criterion(struct protstream *pin,
         break;
 
     case 'x':
-        if (!strcmp(criteria.s, "xattachmentname")) {  /* nonstandard */
-            if (c != ' ') goto missingarg;
-            c = getastring(pin, pout, &arg);
-            if (c == EOF) goto missingarg;
-            string_match(parent, arg.s, "attachmentname", base);
-        }
-        else if (!strcmp(criteria.s, "xlistid")) {           /* nonstandard */
+        if (!strcmp(criteria.s, "xlistid")) {           /* nonstandard */
             if (c != ' ') goto missingarg;
             c = getastring(pin, pout, &arg);
             if (c == EOF) goto missingarg;
