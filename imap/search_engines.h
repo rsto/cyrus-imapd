@@ -120,7 +120,7 @@ struct search_text_receiver {
                        const struct message_guid *content_guid);
     void (*append_text)(search_text_receiver_t *, const struct buf *);
     void (*end_part)(search_text_receiver_t *, int part);
-    int (*end_message)(search_text_receiver_t *);
+    int (*end_message)(search_text_receiver_t *, int indexlevel);
     int (*end_mailbox)(search_text_receiver_t *,
                        struct mailbox *);
     int (*flush)(search_text_receiver_t *);
@@ -189,7 +189,8 @@ extern void search_end_search(search_builder_t *);
 #define SEARCH_UPDATE_BATCH (1<<2)
 #define SEARCH_UPDATE_XAPINDEXED (1<<3)
 #define SEARCH_UPDATE_AUDIT (1<<4)
-#define SEARCH_UPDATE_REINDEX_PARTS (1<<5)
+#define SEARCH_UPDATE_ALLOW_PARTIALS (1<<5)
+#define SEARCH_UPDATE_REINDEX_PARTIALS (1<<6)
 search_text_receiver_t *search_begin_update(int verbose);
 int search_update_mailbox(search_text_receiver_t *rx,
                           struct mailbox *mailbox,

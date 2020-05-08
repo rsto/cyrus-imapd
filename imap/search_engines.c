@@ -161,10 +161,12 @@ static int search_batch_size(void)
  */
 static int flush_batch(search_text_receiver_t *rx,
                        struct mailbox *mailbox,
+                       int flags,
                        ptrarray_t *batch)
 {
     int i;
     int r = 0;
+    int indexflags = 0;
 
     /* give someone else a chance */
     mailbox_unlock_index(mailbox, NULL);
@@ -181,9 +183,15 @@ static int flush_batch(search_text_receiver_t *rx,
                             so we'll fail later anyway */
     }
 
+    if (flags & SEARCH_UPDATE_ALLOW_PARTIALS)
+        indexflags |= INDEX_GETSEARCHTEXT_PARTIALS;
+
     for (i = 0 ; i < batch->count ; i++) {
         message_t *msg = ptrarray_nth(batch, i);
-        if (!r) r = index_getsearchtext(msg, NULL, rx, 0);
+
+        r = index_getsearchtext(msg, NULL, rx, indexflags);
+        if (r) break;
+
         message_unref(&msg);
     }
     ptrarray_truncate(batch, 0);
@@ -208,6 +216,7 @@ EXPORTED int search_update_mailbox(search_text_receiver_t *rx,
     int batch_size = search_batch_size();
     ptrarray_t batch = PTRARRAY_INITIALIZER;
     const message_t *msg;
+    int reindex_partials = flags & SEARCH_UPDATE_REINDEX_PARTIALS;
 
     r = rx->begin_mailbox(rx, mailbox, flags);
     if (r) goto done;
@@ -216,7 +225,8 @@ EXPORTED int search_update_mailbox(search_text_receiver_t *rx,
      * ranges matching the GUID in conversations DB later, we might think we've
      * indexed it when we actually haven't */
     struct mailbox_iter *iter = mailbox_iter_init(mailbox, 0, ITER_SKIP_UNLINKED);
-    if (flags & SEARCH_UPDATE_INCREMENTAL) mailbox_iter_startuid(iter, rx->first_unindexed_uid(rx));
+    if ((flags & SEARCH_UPDATE_INCREMENTAL) && !reindex_partials)
+        mailbox_iter_startuid(iter, rx->first_unindexed_uid(rx));
 
     while ((msg = mailbox_iter_step(iter))) {
         const struct index_record *record = msg_record(msg);
@@ -229,7 +239,8 @@ EXPORTED int search_update_mailbox(search_text_receiver_t *rx,
 
         message_t *msg = message_new_from_record(mailbox, record);
 
-        if (!rx->is_indexed(rx, msg))
+        int indexlevel = rx->is_indexed(rx, msg);
+        if (indexlevel == 0 || (indexlevel > 1 && reindex_partials))
             ptrarray_append(&batch, msg);
         else
             message_unref(&msg);
@@ -237,7 +248,7 @@ EXPORTED int search_update_mailbox(search_text_receiver_t *rx,
     mailbox_iter_done(&iter);
 
     if (batch.count)
-        r = flush_batch(rx, mailbox, &batch);
+        r = flush_batch(rx, mailbox, flags, &batch);
 
  done:
     ptrarray_fini(&batch);

@@ -2595,7 +2595,7 @@ EXPORTED int index_snippets(struct index_state *state,
             if (state->m) message_set_from_record(mailbox, &record, state->m);
             else state->m = message_new_from_record(mailbox, &record);
 
-            index_getsearchtext(state->m, NULL, rx, /*snippet*/1);
+            index_getsearchtext(state->m, NULL, rx, INDEX_GETSEARCHTEXT_SNIPPET);
         }
 
         r = rx->end_mailbox(rx, mailbox);
@@ -5022,6 +5022,8 @@ struct getsearchtext_rock
     int snippet_iteration; /* 0..no snippet, 1..first run, 2..second run */
     struct extractor_ctx *ext;
     strarray_t striphtml; /* strip HTML from these plain text body part ids */
+    int is_partial;
+    int flags;
 };
 
 static void stuff_part(search_text_receiver_t *receiver,
@@ -5368,7 +5370,10 @@ static int extractor_connect(const char *exturl, struct extractor_ctx *ext)
 
     syslog(LOG_DEBUG, "extractor_connect(%s)", exturl);
 
-    if (!ext || ext->failed > 1) return IMAP_INTERNAL;
+    if (ext->failed > 1) {
+        syslog(LOG_INFO, "extractor failed for url: %s", exturl);
+        return IMAP_INTERNAL;
+    }
 
     be = ext->be;
     if (be) {
@@ -5469,7 +5474,7 @@ static int extract_attachment(const char *type, const char *subtype,
     hostlen = strcspn(be->hostname, "/");
 
     if (message_guid_isnull(content_guid)) {
-        syslog(LOG_DEBUG, "extract_attachment: ignoring null guid for %s/%s",
+        syslog(LOG_DEBUG, "%s: ignoring null guid for %s/%s", __func__,
                 type ? type : "<null>", subtype ? subtype : "<null>");
         return 0;
     }
@@ -5496,14 +5501,14 @@ static int extract_attachment(const char *type, const char *subtype,
                                &statuscode, &hdrs, &body, &errstr);
         if (r) {
             syslog(LOG_ERR,
-                   "extract_attachment: failed to read response for GET %s/%s",
-                   ctx->path, guidstr);
+                   "IOERROR: %s: failed to read response for GET %s/%s",
+                   __func__, ctx->path, guidstr);
             r = IMAP_IOERROR;
             goto done;
         }
     } while (statuscode < 200);
 
-    syslog(LOG_DEBUG, "extract_attachment: GET %s/%s: got status %u",
+    syslog(LOG_DEBUG, "%s: GET %s/%s: got status %u", __func__,
            ctx->path, guidstr, statuscode);
 
     /* Abide by server's timeout, if any */
@@ -5524,7 +5529,7 @@ static int extract_attachment(const char *type, const char *subtype,
         struct buf decbuf = BUF_INITIALIZER;
         if (encoding) {
             if (charset_decode(&decbuf, buf_base(data), buf_len(data), encoding)) {
-                syslog(LOG_ERR, "extract_attachment: failed to decode data");
+                syslog(LOG_ERR, "IOERROR: %s: failed to decode data", __func__);
                 r = IMAP_IOERROR;
                 goto done;
             }
@@ -5568,14 +5573,14 @@ static int extract_attachment(const char *type, const char *subtype,
                                    &statuscode, &hdrs, &body, &errstr);
             if (r) {
                 syslog(LOG_ERR,
-                       "extract_attachment: failed to read response for PUT %s/%s",
-                       ctx->path, guidstr);
+                       "IOERROR: %s: failed to read response for PUT %s/%s",
+                       __func__, ctx->path, guidstr);
                 r = IMAP_IOERROR;
                 goto done;
             }
         } while (statuscode < 200);
 
-        syslog(LOG_DEBUG, "extract_attachment: PUT %s/%s: got status %u",
+        syslog(LOG_DEBUG, "%s: PUT %s/%s: got status %u", __func__,
                ctx->path, guidstr, statuscode);
     }
 
@@ -5752,9 +5757,15 @@ static int getsearchtext_cb(int isbody, charset_t charset, int encoding,
 
         r = extract_attachment(type, subtype, type_params, data, encoding,
                                content_guid, str);
-        if (r) {
-            syslog(LOG_ERR, "index: can't extract text from attachment: %s",
-                    error_message(r));
+        if (r == IMAP_IOERROR && (str->flags & INDEX_GETSEARCHTEXT_PARTIALS)) {
+            /* mark message as partially indexed and continue */
+            str->is_partial = 1;
+            r = 0;
+        }
+        else if (r) {
+            syslog(LOG_ERR, "IOERROR index: can't extract attachment %s (%s/%s): %s",
+                             message_guid_encode(content_guid),
+                             type, subtype, error_message(r));
             goto done;
         }
     }
@@ -5859,7 +5870,7 @@ static int find_striphtml_parts(message_t *msg, strarray_t *striphtml)
 
 EXPORTED int index_getsearchtext(message_t *msg, const strarray_t *partids,
                                  search_text_receiver_t *receiver,
-                                 int snippet)
+                                 int flags)
 {
     const char *exturl =
         config_getstring(IMAPOPT_SEARCH_ATTACHMENT_EXTRACTOR_URL);
@@ -5883,14 +5894,19 @@ EXPORTED int index_getsearchtext(message_t *msg, const strarray_t *partids,
 
     memset(&str, 0, sizeof(struct getsearchtext_rock));
     str.receiver = receiver;
-    str.indexed_headers = 0;
     str.charset_flags = charset_flags;
     str.partids = partids;
-    str.snippet_iteration = 0;
+    str.flags = flags;
     if (exturl) {
-        str.ext = index_text_extractor;
-        r = extractor_connect(exturl, str.ext);
-        if (r) return r;
+        if (index_text_extractor) {
+            str.ext = index_text_extractor;
+            r = extractor_connect(exturl, str.ext);
+            if (r) return r;
+        } else {
+            /* This is a legitimate case for sieve and lmtpd */
+            syslog(LOG_INFO, "%s: ignoring uninitialized extractor for url %s",
+                    __func__, exturl);
+        }
     }
 
     /* Search receiver can override text conversion */
@@ -5898,7 +5914,7 @@ EXPORTED int index_getsearchtext(message_t *msg, const strarray_t *partids,
         str.charset_flags = receiver->index_charset_flags(str.charset_flags);
     }
 
-    if (snippet) {
+    if (flags & INDEX_GETSEARCHTEXT_SNIPPET) {
         str.charset_flags |= CHARSET_KEEPCASE;
         format = MESSAGE_SNIPPET;
     }
@@ -5987,10 +6003,12 @@ EXPORTED int index_getsearchtext(message_t *msg, const strarray_t *partids,
         find_striphtml_parts(msg, &str.striphtml);
 
         /* Generate snippets in two passes. */
-        str.snippet_iteration = snippet ? 1 : 0;
+        if (flags & INDEX_GETSEARCHTEXT_SNIPPET) {
+            str.snippet_iteration = 1; /* first pass */
+        }
 
         r = message_foreach_section(msg, getsearchtext_cb, &str);
-        if (snippet) {
+        if (!r && str.snippet_iteration) {
             if (receiver->flush) {
                 r = receiver->flush(receiver);
             }
@@ -6003,7 +6021,19 @@ EXPORTED int index_getsearchtext(message_t *msg, const strarray_t *partids,
         if (r) goto done;
     }
 
-    r = receiver->end_message(receiver);
+    /* Finalize message. Index level 1=fully indexed 2=partially indexed */
+    r = receiver->end_message(receiver, str.is_partial ? 2 : 1);
+
+    /* Log partially indexed message */
+    if (!r && str.is_partial) {
+        struct mailbox *mailbox = msg_mailbox(msg);
+        uint32_t uid = 0;
+        message_get_uid(msg, &uid);
+        if (uid && mailbox) {
+            syslog(LOG_ERR, "IOERROR: index: partially indexed %s:%d",
+                    mailbox->name, uid);
+        }
+    }
 
 done:
     buf_free(&buf);

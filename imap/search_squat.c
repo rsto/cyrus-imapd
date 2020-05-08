@@ -695,7 +695,8 @@ static void end_part(search_text_receiver_t *rx,
     buf_reset(&d->pending_text);
 }
 
-static int end_message(search_text_receiver_t *rx)
+static int end_message(search_text_receiver_t *rx,
+                       int indexlevel __attribute__((unused)))
 {
     SquatReceiverData *d = (SquatReceiverData *) rx;
 

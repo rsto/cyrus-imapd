@@ -85,10 +85,6 @@
 /* Name of columns */
 #define COL_CYRUSID     "cyrusid"
 
-/* Document types */
-#define SEARCH_XAPIAN_DOCTYPE_MSG  'G'
-#define SEARCH_XAPIAN_DOCTYPE_PART 'P'
-
 struct segment
 {
     int part;
@@ -587,7 +583,7 @@ struct cachetier_rock {
 static int cachetier_cb(void *rock, const char *key, size_t keylen,
                         const char *data, size_t datalen)
 {
-    if (*key == '#') {
+    if (keylen >= 2 && *key == '#' && *key == 'c') {
         /* Ignore cache entries */
         return 0;
     }
@@ -619,7 +615,7 @@ static int cachetier_cb(void *rock, const char *key, size_t keylen,
  *
  *     '#c'.<tiername:tiergen>'#'<key>
  *
- * and any keys starting with '#' are ignored during the merge.
+ * and any keys starting with '#c' are ignored during the merge.
  *
  * Returns 0 on success or a cyrusdb error code.
  */
@@ -1532,13 +1528,13 @@ static int split_legacyv4_query(xapian_builder_t *bb,
     if (qguid->children) {
         optimise_nodes(NULL, qguid);
         xapian_query_t *xq = opnode_to_query(bb->lock.db, qguid, bb->opts);
-        if (xq) xq = xapian_query_new_has_doctype(bb->lock.db, SEARCH_XAPIAN_DOCTYPE_MSG, xq);
+        if (xq) xq = xapian_query_new_has_doctype(bb->lock.db, XAPIAN_WRAP_DOCTYPE_MSG, xq);
         if (xq) ptrarray_append(clauses, xq);
     }
     if (qpart->children) {
         optimise_nodes(NULL, qpart);
         xapian_query_t *xq = opnode_to_query(bb->lock.db, qpart, bb->opts);
-        if (xq) xq = xapian_query_new_has_doctype(bb->lock.db, SEARCH_XAPIAN_DOCTYPE_PART, xq);
+        if (xq) xq = xapian_query_new_has_doctype(bb->lock.db, XAPIAN_WRAP_DOCTYPE_PART, xq);
         if (xq) ptrarray_append(clauses, xq);
     }
 
@@ -2157,7 +2153,6 @@ struct xapian_update_receiver
     strarray_t *activetiers;
     hash_table cached_seqs;
     int mode;
-    int reindex_parts;
 };
 
 /* receiver used for extracting snippets after a search */
@@ -2356,8 +2351,8 @@ static int audit_mailbox(search_text_receiver_t *rx, bitvector_t *unindexed)
         r = message_get_guid((message_t*) msg, &guid);
         if (r) goto done;
 
-        // XXX check for all parts of that message?
-        if (!xapian_dbw_is_indexed(tr->dbw, guid, SEARCH_XAPIAN_DOCTYPE_MSG)) {
+        // FIXME partials
+        if (xapian_dbw_is_indexed(tr->dbw, guid, XAPIAN_WRAP_DOCTYPE_MSG) != 1) {
             bv_set(unindexed, uid);
         }
     }
@@ -2432,10 +2427,10 @@ static void append_text(search_text_receiver_t *rx,
                 seg->part = tr->part;
                 if (tr->part_guid) {
                     message_guid_copy(&seg->guid, tr->part_guid);
-                    seg->doctype = SEARCH_XAPIAN_DOCTYPE_PART;
+                    seg->doctype = XAPIAN_WRAP_DOCTYPE_PART;
                 } else {
                     message_guid_copy(&seg->guid, &tr->guid);
-                    seg->doctype = SEARCH_XAPIAN_DOCTYPE_MSG;
+                    seg->doctype = XAPIAN_WRAP_DOCTYPE_MSG;
                 }
                 ptrarray_append(&tr->segs, seg);
             }
@@ -2464,11 +2459,11 @@ static void end_part(search_text_receiver_t *rx,
 
 static int doctype_cmp(char doctype1, char doctype2)
 {
-    if (doctype1 == SEARCH_XAPIAN_DOCTYPE_MSG &&
-        doctype2 != SEARCH_XAPIAN_DOCTYPE_MSG) return -1;
+    if (doctype1 == XAPIAN_WRAP_DOCTYPE_MSG &&
+        doctype2 != XAPIAN_WRAP_DOCTYPE_MSG) return -1;
 
-    if (doctype1 != SEARCH_XAPIAN_DOCTYPE_MSG &&
-        doctype2 == SEARCH_XAPIAN_DOCTYPE_MSG) return 1;
+    if (doctype1 != XAPIAN_WRAP_DOCTYPE_MSG &&
+        doctype2 == XAPIAN_WRAP_DOCTYPE_MSG) return 1;
 
     return doctype1 - doctype2;
 }
@@ -2489,7 +2484,7 @@ static int compare_segs(const void **v1, const void **v2)
     return r;
 }
 
-static int end_message_update(search_text_receiver_t *rx)
+static int end_message_update(search_text_receiver_t *rx, int indexlevel)
 {
     xapian_update_receiver_t *tr = (xapian_update_receiver_t *)rx;
     int i;
@@ -2510,44 +2505,42 @@ static int end_message_update(search_text_receiver_t *rx)
         r = xapian_dbw_begin_txn(tr->dbw);
         if (r) goto out;
     }
-    r = xapian_dbw_begin_doc(tr->dbw, &tr->super.guid, SEARCH_XAPIAN_DOCTYPE_MSG);
+    r = xapian_dbw_begin_doc(tr->dbw, &tr->super.guid, XAPIAN_WRAP_DOCTYPE_MSG);
     if (r) goto out;
     for (i = 0 ; i < tr->super.segs.count ; i++) {
         seg = (struct segment *)ptrarray_nth(&tr->super.segs, i);
         r = xapian_dbw_doc_part(tr->dbw, &seg->text, seg->part);
         if (r) goto out;
     }
-    r = xapian_dbw_end_doc(tr->dbw);
+    r = xapian_dbw_end_doc(tr->dbw, indexlevel);
     if (r) goto out;
     ++tr->uncommitted;
 
-    if (config_getswitch(IMAPOPT_SEARCH_INDEX_PARTS)) {
-        // index body parts with content guid
-        const struct message_guid *last_guid = NULL;
-        for (i = 0 ; i < tr->super.segs.count ; i++) {
-            seg = (struct segment *)ptrarray_nth(&tr->super.segs, i);
-            if (seg->doctype == SEARCH_XAPIAN_DOCTYPE_MSG) continue;
+    // index body parts with content guid
+    const struct message_guid *last_guid = NULL;
+    for (i = 0 ; i < tr->super.segs.count ; i++) {
+        seg = (struct segment *)ptrarray_nth(&tr->super.segs, i);
+        if (seg->doctype == XAPIAN_WRAP_DOCTYPE_MSG) continue;
 
-            if (!last_guid || message_guid_cmp(last_guid, &seg->guid)) {
-                if (last_guid) {
-                    r = xapian_dbw_end_doc(tr->dbw);
-                    if (r) goto out;
-                    ++tr->uncommitted;
-                }
-
-                last_guid = &seg->guid;
-                // TODO which internaldate, if any?
-                r = xapian_dbw_begin_doc(tr->dbw, &seg->guid, seg->doctype);
+        if (!last_guid || message_guid_cmp(last_guid, &seg->guid)) {
+            if (last_guid) {
+                r = xapian_dbw_end_doc(tr->dbw, 1); // always fully indexed
                 if (r) goto out;
+                ++tr->uncommitted;
             }
-            r = xapian_dbw_doc_part(tr->dbw, &seg->text, seg->part);
+
+            last_guid = &seg->guid;
+            // TODO which internaldate, if any?
+            r = xapian_dbw_begin_doc(tr->dbw, &seg->guid, seg->doctype);
             if (r) goto out;
         }
-        if (last_guid) {
-            r = xapian_dbw_end_doc(tr->dbw);
-            if (r) goto out;
-            ++tr->uncommitted;
-        }
+        r = xapian_dbw_doc_part(tr->dbw, &seg->text, seg->part);
+        if (r) goto out;
+    }
+    if (last_guid) {
+        r = xapian_dbw_end_doc(tr->dbw, 1); // always fully indexed
+        if (r) goto out;
+        ++tr->uncommitted;
     }
 
 out:
@@ -2672,7 +2665,6 @@ static int begin_mailbox_update(search_text_receiver_t *rx,
     if (seq) seqset_free(seq);
 
     tr->super.mailbox = mailbox;
-    tr->reindex_parts = flags & SEARCH_UPDATE_REINDEX_PARTS;
 
 out:
     free(fname);
@@ -2751,7 +2743,7 @@ static int is_indexed(search_text_receiver_t *rx, message_t *msg)
     message_get_uid(msg, &uid);
 
     /* bail early if we've already indexed this message in THIS run */
-    if (seqset_ismember(tr->indexed, uid))
+    if (seqset_ismember(tr->indexed, uid)) // FIXME partials?
         return 1;
 
     int ret = 0;
@@ -2778,9 +2770,7 @@ static int is_indexed(search_text_receiver_t *rx, message_t *msg)
         free(guidrep);
     }
     else if (tr->mode == XAPIAN_DBW_XAPINDEXED) {
-        // XXX check for all parts of that message?
-        if (xapian_dbw_is_indexed(tr->dbw, guid, SEARCH_XAPIAN_DOCTYPE_MSG))
-            ret = 1;
+        ret = xapian_dbw_is_indexed(tr->dbw, guid, XAPIAN_WRAP_DOCTYPE_MSG);
     }
 
     /* start the range back at the first unindexed if necessary */
@@ -2816,7 +2806,6 @@ static int end_mailbox_update(search_text_receiver_t *rx,
     }
 
     tr->super.mailbox = NULL;
-    tr->reindex_parts = 0;
 
     if (tr->dbw) {
         xapian_dbw_close(tr->dbw);
@@ -3000,14 +2989,14 @@ static int flush_snippets(search_text_receiver_t *rx)
 
             if (search_part_is_body(seg->part)) {
                 r = xapian_snipgen_begin_doc(tr->snipgen, &seg->guid,
-                        SEARCH_XAPIAN_DOCTYPE_PART);
+                        XAPIAN_WRAP_DOCTYPE_PART);
             }
             else {
                 r = xapian_snipgen_begin_doc(tr->snipgen, &tr->super.guid,
-                        SEARCH_XAPIAN_DOCTYPE_MSG);
+                        XAPIAN_WRAP_DOCTYPE_MSG);
             }
-
             if (r) break;
+
             generate_snippet_terms(tr->snipgen, seg->part, tr->root);
 
             last_guid = &seg->guid;
@@ -3032,7 +3021,8 @@ out:
     return r;
 }
 
-static int end_message_snippets(search_text_receiver_t *rx)
+static int end_message_snippets(search_text_receiver_t *rx,
+                                int indexlevel __attribute__((unused)))
 {
     return flush_snippets(rx);
 }
@@ -3198,9 +3188,11 @@ static int copyindexed_cb(void *rock,
                          const char *data, size_t datalen)
 {
     /* Ignore cached index entries */
-    if (*key == '#') {
+    if (keylen >= 2 && *key == '#' && *key == 'c') {
         return 0;
     }
+
+    // FIXME process partially indexed
 
     /* Copy the record */
     struct mbfilter *filter = (struct mbfilter *)rock;
@@ -3365,7 +3357,6 @@ static int reindex_mb(void *rock,
     r = xapian_dbw_open((const char **)filter->destpaths->data, &tr->dbw, tr->mode);
     if (r) goto done;
     tr->super.mailbox = mailbox;
-    tr->reindex_parts = 1; /* force re-indexing body parts */
 
     tr->activedirs = strarray_dup(filter->destpaths);
     tr->activetiers = strarray_dup(filter->desttiers);
@@ -3387,7 +3378,7 @@ static int reindex_mb(void *rock,
         message_t *msg = message_new_from_record(mailbox, record);
 
         /* add the record to the list */
-        if (!is_indexed((search_text_receiver_t *)tr, msg))
+        if (is_indexed((search_text_receiver_t *)tr, msg) != 1) // FIXME partials
             ptrarray_append(&batch, msg);
         else
             message_unref(&msg);
@@ -3419,7 +3410,7 @@ static int reindex_mb(void *rock,
         /* index the messages */
         for (i = 0 ; i < batch.count ; i++) {
             message_t *msg = ptrarray_nth(&batch, i);
-            r = index_getsearchtext(msg, NULL, &tr->super.super, 0);
+            r = index_getsearchtext(msg, NULL, &tr->super.super, 0); // FIXME partials?
             if (r) goto done;
             message_unref(&msg);
         }

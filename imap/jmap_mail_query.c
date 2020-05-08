@@ -421,10 +421,11 @@ static void _matchmime_tr_end_part(search_text_receiver_t *rx, int part)
     buf_reset(&tr->buf);
 }
 
-static int _matchmime_tr_end_message(search_text_receiver_t *rx)
+static int _matchmime_tr_end_message(search_text_receiver_t *rx,
+                                     int indexlevel __attribute__((unused)))
 {
     struct matchmime_receiver *tr = (struct matchmime_receiver *) rx;
-    return xapian_dbw_end_doc(tr->dbw);
+    return xapian_dbw_end_doc(tr->dbw, 0);
 }
 
 static int _matchmime_tr_end_mailbox(search_text_receiver_t *rx __attribute__((unused)),
