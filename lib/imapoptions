@@ -2188,11 +2188,8 @@ If all partitions are over that limit, this feature is not used anymore.
   searched using the default stemmer.
  */
 
-{ "search_index_parts", 0, SWITCH, "3.1.7" }
-/*
-  If enabled, then message parts are each indexed separately into Xapian
-  so that matches can be done by part.
- */
+{ "search_index_parts", 0, SWITCH, "3.1.7", "3.2" }
+/* Deprecated. No longer used */
 
 { "search_query_language", 0, SWITCH, "3.1.7" }
 /*

@@ -385,8 +385,8 @@ static uint32_t _matchmime_tr_first_unindexed_uid(search_text_receiver_t *rx __a
     return 1;
 }
 
-static int _matchmime_tr_is_indexed(search_text_receiver_t *rx __attribute__((unused)),
-                                    message_t *msg __attribute__((unused)))
+static uint8_t _matchmime_tr_is_indexed(search_text_receiver_t *rx __attribute__((unused)),
+                                        message_t *msg __attribute__((unused)))
 {
     return 0;
 }
@@ -421,10 +421,11 @@ static void _matchmime_tr_end_part(search_text_receiver_t *rx, int part)
     buf_reset(&tr->buf);
 }
 
-static int _matchmime_tr_end_message(search_text_receiver_t *rx)
+static int _matchmime_tr_end_message(search_text_receiver_t *rx,
+                                     uint8_t indexlevel)
 {
     struct matchmime_receiver *tr = (struct matchmime_receiver *) rx;
-    return xapian_dbw_end_doc(tr->dbw);
+    return xapian_dbw_end_doc(tr->dbw, indexlevel);
 }
 
 static int _matchmime_tr_end_mailbox(search_text_receiver_t *rx __attribute__((unused)),

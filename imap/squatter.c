@@ -99,10 +99,11 @@ static int verbose = 0;
 static int incremental_mode = 0;
 static int batch_mode = 0;
 static int xapindexed_mode = 0;
-static int reindex_parts_mode = 0;
 static int recursive_flag = 0;
 static int annotation_flag = 0;
 static int sleepmicroseconds = 0;
+static int allow_partials = 0;
+static int reindex_partials = 0;
 static const char *temp_root_dir = NULL;
 static search_text_receiver_t *rx = NULL;
 
@@ -126,9 +127,10 @@ __attribute__((noreturn)) static int usage(const char *name)
             "\n"
             "Index mode options:\n"
             "  -i          index incrementally\n"
+            "  -p          allow partially indexed messages\n"
+            "  -P          reindex partially indexed messages (implies -Z)\n"
             "  -N name     index mailbox names starting with name\n"
             "  -S seconds  sleep seconds between indexing mailboxes\n"
-            "  -P          reindex body parts\n"
             "  -Z          Xapian: use internal index rather than cyrus.indexed.db\n"
             "\n"
             "Index sources:\n"
@@ -144,7 +146,7 @@ __attribute__((noreturn)) static int usage(const char *name)
             "  -t tier...  compact from tiers\n"
             "  -F          filter during compaction\n"
             "  -T dir      use temporary directory dir during compaction\n"
-            "  -X          reindex during compaction (including body parts)\n"
+            "  -X          reindex during compaction\n"
             "  -o          copy db rather compacting\n"
             "  -U          only compact if re-indexing\n"
             "\n"
@@ -242,8 +244,10 @@ static int index_one(const char *name, int blocking)
         flags |= SEARCH_UPDATE_BATCH;
     if (xapindexed_mode)
         flags |= SEARCH_UPDATE_XAPINDEXED;
-    if (reindex_parts_mode)
-        flags |= SEARCH_UPDATE_REINDEX_PARTS;
+    if (allow_partials)
+        flags |= SEARCH_UPDATE_ALLOW_PARTIALS;
+    if (reindex_partials)
+        flags |= SEARCH_UPDATE_REINDEX_PARTIALS;
 
     /* Convert internal name to external */
     char *extname = mboxname_to_external(name, &squat_namespace, NULL);
@@ -845,8 +849,9 @@ int main(int argc, char **argv)
 
     setbuf(stdout, NULL);
 
-    while ((opt = getopt(argc, argv, "C:N:RUXPZT:S:Fde:f:mn:riavAz:t:ouhl")) != EOF) {
+    while ((opt = getopt(argc, argv, "C:N:RUXZT:S:Fde:f:mn:rpPiavAz:t:ouhl")) != EOF) {
         switch (opt) {
+
         case 'A':
             if (mode != UNKNOWN) usage(argv[0]);
             mode = AUDIT;
@@ -865,8 +870,8 @@ int main(int argc, char **argv)
             break;
 
         case 'P':
-            reindex_parts_mode = 1;
-            break;
+            reindex_partials = 1;
+            // fallthrough
 
         case 'Z':
             /* we have two different flag types for the two different modes,
@@ -958,6 +963,10 @@ int main(int argc, char **argv)
             if (mode != UNKNOWN && mode != COMPACT) usage(argv[0]);
             desttier = optarg;
             mode = COMPACT;
+            break;
+
+        case 'p':               /* allow partials */
+            allow_partials = 1;
             break;
 
         case 't':

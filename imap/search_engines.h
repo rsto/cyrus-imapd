@@ -109,20 +109,26 @@ extern search_snippet_markup_t default_snippet_markup;
    sequence, and the sequences for different parts cannot be interleaved.
    Multiple parts can share the same <contentid>.
 */
+
 typedef struct search_text_receiver search_text_receiver_t;
 struct search_text_receiver {
     int (*begin_mailbox)(search_text_receiver_t *,
                          struct mailbox *, int incremental);
     uint32_t (*first_unindexed_uid)(search_text_receiver_t *);
-    int (*is_indexed)(search_text_receiver_t *, message_t *msg);
+    /* returns the highest index level of msg. ties between equal index levels
+     * are broken by choosing the index level without the partial bit set */
+    uint8_t (*is_indexed)(search_text_receiver_t *, message_t *msg);
     int (*begin_message)(search_text_receiver_t *, message_t *msg);
     void (*begin_part)(search_text_receiver_t *, int part,
                        const struct message_guid *content_guid);
     void (*append_text)(search_text_receiver_t *, const struct buf *);
     void (*end_part)(search_text_receiver_t *, int part);
-    int (*end_message)(search_text_receiver_t *);
-    int (*end_mailbox)(search_text_receiver_t *,
-                       struct mailbox *);
+#define SEARCH_INDEXLEVEL_BASIC 1
+#define SEARCH_INDEXLEVEL_ATTACH 3 /* includes BASIC */
+#define SEARCH_INDEXLEVEL_BEST SEARCH_INDEXLEVEL_ATTACH
+#define SEARCH_INDEXLEVEL_PARTIAL 128
+    int (*end_message)(search_text_receiver_t *, uint8_t indexlevel);
+    int (*end_mailbox)(search_text_receiver_t *, struct mailbox *);
     int (*flush)(search_text_receiver_t *);
     int (*audit_mailbox)(search_text_receiver_t *, bitvector_t *unindexed);
     int (*index_charset_flags)(int base_flags);
@@ -149,6 +155,7 @@ struct search_engine {
 #define SEARCH_COMPACT_REINDEX  (1<<7)  /* re-index all matching messages */
 #define SEARCH_COMPACT_ONLYUPGRADE (1<<8) /* only compact if reindexing */
 #define SEARCH_COMPACT_XAPINDEXED (1<<9) /* use XAPIAN index */
+#define SEARCH_COMPACT_ALLOW_PARTIALS (1<<11) /* allow partially indexed messages */
 #define SEARCH_ATTACHMENTS_IN_ANY (1<<10) /* search attachments in ANY part */
     search_builder_t *(*begin_search)(struct mailbox *, int opts);
     void (*end_search)(search_builder_t *);
@@ -189,7 +196,8 @@ extern void search_end_search(search_builder_t *);
 #define SEARCH_UPDATE_BATCH (1<<2)
 #define SEARCH_UPDATE_XAPINDEXED (1<<3)
 #define SEARCH_UPDATE_AUDIT (1<<4)
-#define SEARCH_UPDATE_REINDEX_PARTS (1<<5)
+#define SEARCH_UPDATE_ALLOW_PARTIALS (1<<5)
+#define SEARCH_UPDATE_REINDEX_PARTIALS (1<<6)
 search_text_receiver_t *search_begin_update(int verbose);
 int search_update_mailbox(search_text_receiver_t *rx,
                           struct mailbox *mailbox,
