@@ -636,6 +636,7 @@ static int _email_matchmime_evaluate(json_t *filter,
 
     int need_matches = json_object_size(filter);
     int have_matches = 0;
+    json_t *jval;
 
     /* Xapian-backed criteria */
     ptrarray_t xqs = PTRARRAY_INITIALIZER;
@@ -723,6 +724,13 @@ static int _email_matchmime_evaluate(json_t *filter,
         xapian_query_t *xq = build_type_query(db, match);
         if (xq) ptrarray_append(&xqs, xq);
     }
+    if (JNOTNULL(jval = json_object_get(filter, "isHighPriority"))) {
+        xapian_query_t *xq = xapian_query_new_match(db, SEARCH_PART_PRIORITY, "1");
+        if (xq && !json_boolean_value(jval)) {
+            xq = xapian_query_new_not(db, xq);
+        }
+        if (xq) ptrarray_append(&xqs, xq);
+    }
     // ignore attachmentBody
 
     if (xqs.count) {
@@ -758,8 +766,6 @@ static int _email_matchmime_evaluate(json_t *filter,
             }
         }
     }
-
-    json_t *jval;
 
     /* hasAttachment */
     if (JNOTNULL(jval = json_object_get(filter, "hasAttachment"))) {
