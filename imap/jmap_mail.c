@@ -1853,6 +1853,192 @@ static const search_attr_t _emailsearch_folders_otherthan_attr = {
     (void*)1 /*is_otherthan*/
 };
 
+struct headermatch {
+    enum headermatch_op {
+        HEADERMATCH_EQUALS,
+        HEADERMATCH_STARTS,
+        HEADERMATCH_ENDS,
+        HEADERMATCH_CONTAINS
+    } op;
+    char *header;
+    char *value;
+    size_t len;
+};
+
+static void headermatch_normalise(struct buf *buf)
+{
+    if (buf_len(buf)) return;
+
+    buf_cstring(buf);
+
+    /* Fast-path ASCII with no leading, trailing or consecutive whitespace */
+    if (!isspace(buf->s[0]) && !isspace(buf->s[buf->len-1])) {
+        char *s;
+        for (s = buf->s; *s; s++) {
+            if (!isascii(*s) || (isspace(s[0]) && isspace(s[1]))) {
+                break;
+            }
+            *s = toupper(*s);
+        }
+        if (!*s) return;
+    }
+
+    buf_trim(buf);
+
+    // FIXME
+}
+
+static struct headermatch *headermatch_newvalue(const char *header,
+                                                const char *value,
+                                                const char *strop)
+{
+    struct headermatch *hm = xmalloc(sizeof(struct headermatch));
+
+    if (!strcmp(strop, "equals")) {
+        hm->op = HEADERMATCH_EQUALS;
+    }
+    else if (!strcmp(strop, "startsWith")) {
+        hm->op = HEADERMATCH_STARTS;
+    }
+    else if (!strcmp(strop, "endsWith")) {
+        hm->op = HEADERMATCH_ENDS;
+    }
+    else {
+        hm->op = HEADERMATCH_CONTAINS;
+    }
+
+    hm->header = xstrdup(header);
+
+    struct buf buf = BUF_INITIALIZER;
+    buf_setcstr(&buf, value);
+    headermatch_normalise(&buf);
+    hm->len = buf_len(&buf);
+    hm->value = buf_release(&buf);
+
+    return hm;
+}
+
+static void _emailsearch_headermatch_internalise(struct index_state *state __attribute__((unused)),
+                                                 const union search_value *v,
+                                                 void **internalisedp)
+{
+    if (*internalisedp) {
+        struct buf *buf = *internalisedp;
+        buf_free(buf);
+        free(buf);
+        *internalisedp = NULL;
+    }
+    if (v) {
+        *internalisedp = xzmalloc(sizeof(struct buf));
+    }
+}
+
+static int _emailsearch_headermatch_match(message_t *m,
+                                          const union search_value *v,
+                                          void *internalised,
+                                          void *data1 __attribute__((unused)))
+{
+    struct buf raw = BUF_INITIALIZER;
+    struct headermatch *hm = v->v;
+    int match = 0;
+
+    if (!message_get_field(m, hm->header,
+                MESSAGE_DECODED|MESSAGE_APPEND|MESSAGE_MULTIPLE, &raw)) {
+
+        /* Iterate header values until match found */
+        struct buf *buf = internalised;
+        const char *p = buf_cstring(&raw);
+        do {
+            /* Extract and normalise header value */
+            for ( ; isspace(*p); p++) {}
+            const char *q;
+            for (q = p; *q && *q != '\r'; q++) {}
+            buf_setmap(buf, p, q - p);
+            headermatch_normalise(buf);
+            /* Match header value */
+            if (buf_len(buf) >= hm->len) {
+                const char *v = buf_cstring(buf);
+                switch (hm->op) {
+                    case HEADERMATCH_EQUALS:
+                        match = !strcmp(v, hm->value);
+                        break;
+                    case HEADERMATCH_STARTS:
+                        match = !strncmp(v, hm->value, hm->len);
+                        break;
+                    case HEADERMATCH_ENDS:
+                        match = !strcmp(v + buf_len(buf) - hm->len, hm->value);
+                        break;
+                    default:
+                        match = strstr(v, hm->value) != NULL;
+                }
+            }
+            /* Find next header value, if any */
+            if (*q) q += (q[1] == '\n') ? 2 : 1;
+            p = q;
+            q = strchr(p, ':');
+            if (q) p = q + 1;
+        } while(!match && *p);
+        buf_reset(buf);
+    }
+
+    buf_free(&raw);
+    return match;
+}
+
+static void _emailsearch_headermatch_serialise(struct buf *buf,
+                                               const union search_value *v)
+{
+    // FIXME
+    assert(buf);
+    assert(v);
+}
+
+static int _emailsearch_headermatch_unserialise(struct protstream* prot,
+                                                union search_value *v)
+{
+    // FIXME
+    assert(prot);
+    assert(v);
+    return 0;
+}
+
+static void _emailsearch_headermatch_duplicate(union search_value *new,
+                                               const union search_value *old)
+{
+    struct headermatch *oldm = old->v;
+    struct headermatch *newm = xmalloc(sizeof(struct headermatch));
+    newm->op = oldm->op;
+    newm->header = xstrdup(oldm->header);
+    newm->value = xstrdup(oldm->value);
+    newm->len = oldm->len;
+    new->v = newm;
+}
+
+static void _emailsearch_headermatch_free(union search_value *v)
+{
+    struct headermatch *vm = v->v;
+    free(vm->header);
+    free(vm->value);
+    free(vm);
+    v->v = NULL;
+}
+
+static const search_attr_t _emailsearch_headermatch_attr = {
+    "jmap_headermatch",
+    /*flags*/0,
+    SEARCH_PART_NONE,
+    SEARCH_COST_BODY,
+    _emailsearch_headermatch_internalise,
+    /*cmp*/NULL,
+    _emailsearch_headermatch_match,
+    _emailsearch_headermatch_serialise,
+    _emailsearch_headermatch_unserialise,
+    /*get_countability*/NULL,
+    _emailsearch_headermatch_duplicate,
+    _emailsearch_headermatch_free,
+    NULL
+};
+
 
 /* ====================================================================== */
 
@@ -1962,21 +2148,34 @@ static search_expr_t *_email_buildsearchexpr(jmap_req_t *req, json_t *filter,
             _email_search_type(this, s, perf_filters);
         }
         if (JNOTNULL((val = json_object_get(filter, "header")))) {
-            const char *k, *v;
+            const char *hdr, *str = "", *cmp = NULL;
             charset_t utf8 = charset_lookupname("utf-8");
             search_expr_t *e;
 
-            if (json_array_size(val) == 2) {
-                k = json_string_value(json_array_get(val, 0));
-                v = json_string_value(json_array_get(val, 1));
-            } else {
-                k = json_string_value(json_array_get(val, 0));
-                v = ""; /* Empty string matches any value */
+            switch (json_array_size(val)) {
+                case 3:
+                    cmp = json_string_value(json_array_get(val, 2));
+                    GCC_FALLTHROUGH
+                case 2:
+                    str = json_string_value(json_array_get(val, 1));
+                    GCC_FALLTHROUGH
+                case 1:
+                    hdr = json_string_value(json_array_get(val, 0));
+                    break;
+                default:
+                    assert(0); // validation must reject this
             }
 
-            e = search_expr_new(this, SEOP_MATCH);
-            e->attr = search_attr_find_field(k);
-            e->value.s = xstrdup(v);
+            if (!cmp) {
+                e = search_expr_new(this, SEOP_MATCH);
+                e->attr = search_attr_find_field(hdr);
+                e->value.s = xstrdup(str);
+            }
+            else {
+                e = search_expr_new(this, SEOP_MATCH);
+                e->attr = &_emailsearch_headermatch_attr;
+                e->value.v = headermatch_newvalue(hdr, str, cmp);
+            }
 
             _email_search_perf_attr(e->attr, perf_filters);
             charset_free(&utf8);
