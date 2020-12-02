@@ -798,43 +798,61 @@ static int _email_matchmime_evaluate(json_t *filter,
 
     /* header */
     if (JNOTNULL((jval = json_object_get(filter, "header")))) {
-        const char *hdr, *val;
+        const char *hdr = NULL, *val = "", *cmp = NULL;
 
-        if (json_array_size(jval) == 2) {
-            hdr = json_string_value(json_array_get(jval, 0));
-            val = json_string_value(json_array_get(jval, 1));
-        } else {
-            hdr = json_string_value(json_array_get(jval, 0));
-            val = NULL; // match any value
+        switch (json_array_size(jval)) {
+            case 3:
+                cmp = json_string_value(json_array_get(jval, 2));
+                GCC_FALLTHROUGH
+            case 2:
+                val = json_string_value(json_array_get(jval, 1));
+                GCC_FALLTHROUGH
+            case 1:
+                hdr = json_string_value(json_array_get(jval, 0));
+                break;
+            default:
+                return 0;
         }
 
         int matches = 0;
 
-        /* Replicate match_header logic in search_expr.c */
-        char *lhdr = lcase(xstrdup(hdr));
-        struct buf buf = BUF_INITIALIZER;
-        int r = message_get_field(m, lhdr,
-                MESSAGE_DECODED|MESSAGE_APPEND|MESSAGE_MULTIPLE, &buf);
-        if (!r) {
-            if (val) {
-                charset_t utf8 = charset_lookupname("utf-8");
-                char *v = NULL;
-                if ((v = charset_convert(val, utf8, charset_flags))) {
-                    comp_pat *pat = charset_compilepat(v);
-                    if (pat) {
-                        matches = charset_searchstring(v, pat, buf.s, buf.len, charset_flags);
+        if (!cmp) {
+            /* Replicate match_header logic in search_expr.c */
+            char *lhdr = lcase(xstrdup(hdr));
+            struct buf buf = BUF_INITIALIZER;
+            int r = message_get_field(m, lhdr,
+                    MESSAGE_DECODED|MESSAGE_APPEND|MESSAGE_MULTIPLE, &buf);
+            if (!r) {
+                if (val) {
+                    charset_t utf8 = charset_lookupname("utf-8");
+                    char *v = NULL;
+                    if ((v = charset_convert(val, utf8, charset_flags))) {
+                        comp_pat *pat = charset_compilepat(v);
+                        if (pat) {
+                            matches = charset_searchstring(v, pat, buf.s, buf.len, charset_flags);
+                        }
+                        charset_freepat(pat);
                     }
-                    charset_freepat(pat);
+                    free(v);
+                    charset_free(&utf8);
                 }
-                free(v);
-                charset_free(&utf8);
+                else {
+                    matches = buf_len(&buf) > 0;
+                }
             }
-            else {
-                matches = buf_len(&buf) > 0;
-            }
+            buf_free(&buf);
+            free(lhdr);
         }
-        buf_free(&buf);
-        free(lhdr);
+        else {
+            struct jmap_headermatch *hm = jmap_headermatch_new(hdr, val, cmp);
+            struct buf tmp1 = BUF_INITIALIZER;
+            struct buf tmp2 = BUF_INITIALIZER;
+            matches = jmap_headermatch_match(hm, m, &tmp1, &tmp2);
+            buf_free(&tmp2);
+            buf_free(&tmp1);
+            jmap_headermatch_free(&hm);
+        }
+
         if (matches) {
             have_matches++;
         } else return 0;
@@ -1094,4 +1112,158 @@ done:
 }
 
 #endif /* WITH_DAV */
+
+static void headermatch_normalize(struct buf *buf)
+{
+    if (!buf_len(buf)) return;
+
+    buf_cstring(buf);
+
+    /* Fast-path ASCII with no leading, trailing or consecutive whitespace */
+    if (!isspace(buf->s[0]) && !isspace(buf->s[buf->len-1])) {
+        char *s;
+        for (s = buf->s; *s; s++) {
+            if (!isascii(*s) || (isspace(s[0]) && isspace(s[1]))) {
+                break;
+            }
+            *s = toupper(*s);
+        }
+        if (!*s) return;
+    }
+
+    buf_trim(buf);
+
+    // FIXME add stream-based normalization to charset_convert
+    // FIXME add struct buf argument to charset_convert
+    static int flags = CHARSET_SKIPDIACRIT|CHARSET_MERGESPACE|CHARSET_TRIMWS;
+    charset_t utf8 = charset_lookupname("utf8");
+    char *searchform = charset_convert(buf_cstring(buf), utf8, flags);
+    charset_free(&utf8);
+
+    char *normform = charset_utf8_normalize(searchform);
+    buf_setcstr(buf, normform);
+    free(searchform);
+    free(normform);
+}
+
+HIDDEN struct jmap_headermatch *jmap_headermatch_new(const char *header,
+                                                     const char *value,
+                                                     const char *strop)
+{
+    struct jmap_headermatch *hm = xmalloc(sizeof(struct jmap_headermatch));
+    struct buf buf = BUF_INITIALIZER;
+
+    if (!strcmpsafe(strop, "equals")) {
+        hm->op = HEADERMATCH_EQUALS;
+    }
+    else if (!strcmpsafe(strop, "startsWith")) {
+        hm->op = HEADERMATCH_STARTS;
+    }
+    else if (!strcmpsafe(strop, "endsWith")) {
+        hm->op = HEADERMATCH_ENDS;
+    }
+    else {
+        hm->op = HEADERMATCH_CONTAINS;
+    }
+    hm->header = lcase(xstrdup(header));
+    buf_setcstr(&buf, value);
+    headermatch_normalize(&buf);
+    hm->len = buf_len(&buf);
+    hm->value = buf_release(&buf);
+
+    return hm;
+}
+
+HIDDEN void jmap_headermatch_free(struct jmap_headermatch **hmp)
+{
+    if (!hmp || !*hmp) return;
+
+    free((*hmp)->header);
+    free((*hmp)->value);
+    free(*hmp);
+    *hmp = NULL;
+}
+
+HIDDEN struct jmap_headermatch *jmap_headermatch_dup(struct jmap_headermatch *hm)
+{
+    if (!hm) return NULL;
+
+    struct jmap_headermatch *hm2 = xmalloc(sizeof(struct jmap_headermatch));
+    hm2->op = hm->op;
+    hm2->header = xstrdup(hm->header);
+    hm2->value = xstrdup(hm->value);
+    hm2->len = hm->len;
+    return hm2;
+}
+
+HIDDEN int jmap_headermatch_match(struct jmap_headermatch *hm, message_t *msg,
+                                  struct buf *tmp1, struct buf *tmp2)
+{
+    int match = 0;
+
+    if (!message_get_field(msg, hm->header,
+                MESSAGE_RAW|MESSAGE_APPEND|MESSAGE_MULTIPLE, tmp1)) {
+
+        if (!buf_len(tmp1)) {
+            match = 0;
+            goto done;
+        }
+        else if (!*hm->value) {
+            match = 1;
+            goto done;
+        }
+
+        /* Iterate header values until match found */
+        const char *p = buf_cstring(tmp1);
+        do {
+            /* Extract value, including optional line folds */
+            const char *q;
+            for (q = p; *q; q++) {
+                if (*q == '\r') {
+                    if (q[1] == '\n' && (q[2] == '\t' || q[2] == ' ')) {
+                        q++;
+                    }
+                    else {
+                        break;
+                    }
+                }
+            }
+            buf_setmap(tmp2, p, q - p);
+
+            /* Match header value */
+
+            // don't care about encoding here: the cached headers already are
+            // decoded, and we don't know the encoding for arbitrary headers
+
+            headermatch_normalize(tmp2);
+
+            if (buf_len(tmp2) >= hm->len) {
+                const char *v = buf_cstring(tmp2);
+                switch (hm->op) {
+                    case HEADERMATCH_EQUALS:
+                        match = !strcmp(v, hm->value);
+                        break;
+                    case HEADERMATCH_STARTS:
+                        match = !strncmp(v, hm->value, hm->len);
+                        break;
+                    case HEADERMATCH_ENDS:
+                        match = !strcmp(v + buf_len(tmp2) - hm->len, hm->value);
+                        break;
+                    default:
+                        match = strstr(v, hm->value) != NULL;
+                }
+            }
+            /* Find next header value, if any */
+            if (*q) q += (q[1] == '\n') ? 2 : 1;
+            p = q;
+            q = strchr(p, ':');
+            if (q) p = q + 1;
+        } while(!match && *p);
+    }
+
+done:
+    buf_reset(tmp2);
+    buf_reset(tmp1);
+    return match;
+}
 
