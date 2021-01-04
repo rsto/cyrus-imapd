@@ -3633,6 +3633,11 @@ static const jmap_property_t event_props[] = {
         NULL,
         0
     },
+    {
+        "timeZones",
+        NULL,
+        0
+    },
 
     /* JSEvent properties */
     {
