@@ -67,7 +67,7 @@ struct search_folder {
     bitvector_t uids;
     bitvector_t found_uids;
     int found_dirty;
-    hashu64_table partids; /* maps uid to starray_t* of part ids */
+    hashu64_table partnums_by_uid; /* maps uid to smallarray_t* of partnums */
 };
 
 struct search_subquery {
@@ -110,6 +110,7 @@ struct search_query {
     int verbose;
     int ignore_timer;
     int attachments_in_any;
+    int want_partids;
 
     /*
      * A query comprises multiple sub-queries logically ORed together.
@@ -161,6 +162,13 @@ struct search_query {
      * folder, guid.
      */
     ptrarray_t merged_msgdata;
+
+    /* A map from string message part ids to a unique numeric
+     * identifier. This allows to save good chunk of string mallocs */
+    hashu64_table partid_by_num;
+    hash_table partnum_by_id;
+    uint64_t partnum_seq;
+
 };
 
 extern search_query_t *search_query_new(struct index_state *state,

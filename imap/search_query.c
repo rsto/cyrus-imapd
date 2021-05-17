@@ -60,6 +60,7 @@
 #include "bsearch.h"
 #include "xstrlcpy.h"
 #include "xmalloc.h"
+#include "smallarrayu64.h"
 #include "statuscache.h"
 
 /* generated headers are not necessarily in current directory */
@@ -80,13 +81,15 @@ EXPORTED search_query_t *search_query_new(struct index_state *state,
     ptrarray_init(&query->merged_msgdata);
     construct_hash_table(&query->folders_by_name, 128, 0);
     ptrarray_init(&query->folders_by_id);
+    construct_hashu64_table(&query->partid_by_num, 1024, 0);
+    construct_hash_table(&query->partnum_by_id, 1024, 0);
 
     return query;
 }
 
-static void folder_free_partids(void *data)
+static void partnums_free(void *data)
 {
-    strarray_free((strarray_t*)data);
+    smallarrayu64_free((smallarrayu64_t*)data);
 }
 
 static void folder_free(void *data)
@@ -96,7 +99,9 @@ static void folder_free(void *data)
     free(folder->mboxname);
     bv_fini(&folder->uids);
     bv_fini(&folder->found_uids);
-    free_hashu64_table(&folder->partids, folder_free_partids);
+    if (folder->partnums_by_uid.size) {
+        free_hashu64_table(&folder->partnums_by_uid, partnums_free);
+    }
     free(folder);
 }
 
@@ -129,6 +134,9 @@ EXPORTED void search_query_free(search_query_t *query)
         free(saved);
     }
     ptrarray_fini(&query->saved_msgdata);
+
+    free_hash_table(&query->partnum_by_id, NULL);
+    free_hashu64_table(&query->partid_by_num, free);
 
     free(query);
 }
@@ -604,7 +612,6 @@ EXPORTED void search_build_query(search_builder_t *bx, search_expr_t *e)
         bop = SEARCH_OP_OR;
         break;
 
-    case SEOP_MATCH:
     case SEOP_FUZZYMATCH:
         if (e->attr && search_can_match(e->op, e->attr->part)) {
             if (e->attr->flags & SEA_ISLIST) {
@@ -629,7 +636,7 @@ EXPORTED void search_build_query(search_builder_t *bx, search_expr_t *e)
 }
 
 static int add_found_uid(const char *mboxname, uint32_t uidvalidity,
-                             uint32_t uid, const strarray_t *partids,
+                             uint32_t uid, const char *partid __attribute__((unused)),
                              void *rock)
 {
     struct subquery_rock *qr = rock;
@@ -637,19 +644,24 @@ static int add_found_uid(const char *mboxname, uint32_t uidvalidity,
     if (folder) {
         bv_set(&folder->found_uids, uid);
         folder->found_dirty = 1;
-        if (partids && !qr->is_excluded) {
-            if (!folder->partids.size) {
-                if (!construct_hashu64_table(&folder->partids, 4096, 0))
-                    return IMAP_INTERNAL;
+        if (partid && qr->query->want_partids && !qr->is_excluded) {
+            uint64_t partnum = (uint64_t) hash_lookup(partid, &qr->query->partnum_by_id);
+            if (!partnum) {
+                partnum = ++qr->query->partnum_seq;
+                hash_insert(partid, (void*) partnum, &qr->query->partnum_by_id);
+                hashu64_insert(partnum, xstrdup(partid), &qr->query->partid_by_num);
             }
-            strarray_t *have_partids = hashu64_lookup(uid, &folder->partids);
-            if (have_partids) {
-                int i;
-                for (i = 0; i < strarray_size(partids); i++) {
-                    strarray_add(have_partids, strarray_nth(partids, i));
-                }
+            if (!folder->partnums_by_uid.size) {
+                // FIXME this will degrade to linear search for almost
+                // any middle-sized mailbox! can we do better?
+                construct_hashu64_table(&folder->partnums_by_uid, 4096, 0);
             }
-            else hashu64_insert(uid, strarray_dup(partids), &folder->partids);
+            smallarrayu64_t *partnums = hashu64_lookup(uid, &folder->partnums_by_uid);
+            if (!partnums) {
+                partnums = smallarrayu64_new();
+                hashu64_insert(uid, partnums, &folder->partnums_by_uid);
+            }
+            smallarrayu64_append(partnums, partnum);
         }
     }
     return 0;
