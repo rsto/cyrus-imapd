@@ -77,8 +77,8 @@
 /* generated headers are not necessarily in current directory */
 #include "imap/imap_err.h"
 
-#define INDEXEDDB_VERSION           2 /* version string for entry value */
-#define INDEXEDDB_KEY_VERSION       2 /* version string for entry keys */
+#define INDEXEDDB_VAL_VERSION   2 /* current version for entry value */
+#define INDEXEDDB_VERSION       2 /* current database version */
 #define INDEXEDDB_FNAME         "/cyrus.indexed.db"
 #define XAPIAN_NAME_LOCK_PREFIX "$XAPIAN$"
 
@@ -589,197 +589,126 @@ struct cachetier_rock {
     struct buf *buf;
     struct db *dst_db;
     struct txn *txn;
+    int dbversion;
 };
 
-static int cachetier_cb(void *rock, const char *key, size_t keylen,
+static int cachetier_cb(void *vrock, const char *key, size_t keylen,
                         const char *data, size_t datalen)
 {
-    /* Ignore all but mailbox entries */
-    if (keylen < 3 || strncmp(key, "*M*", 3)) return 0;
+    struct cachetier_rock *rock = vrock;
 
-    struct cachetier_rock *mr = rock;
-    size_t prefix_len = buf_len(mr->buf);
+    if (rock->dbversion >= 2) {
+        /* Ignore all but mailbox entries */
+        if (keylen < 3 || strncmp(key, "*M*", 3)) return 0;
+    }
+    else {
+        /* Ignore cache entries */
+        if (*key == '#') return 0;
+    }
+
+    size_t prefix_len = buf_len(rock->buf);
     int r = 0;
 
-    buf_appendmap(mr->buf, key, keylen);
-    r = cyrusdb_store(mr->dst_db, buf_base(mr->buf), buf_len(mr->buf),
-                      data, datalen, &mr->txn);
-    buf_truncate(mr->buf, prefix_len);
+    buf_appendmap(rock->buf, key, keylen);
+    r = cyrusdb_store(rock->dst_db, buf_base(rock->buf), buf_len(rock->buf),
+                      data, datalen, &rock->txn);
+    buf_truncate(rock->buf, prefix_len);
     if (r) {
         syslog(LOG_ERR, "cachetier_cb: could not save key %.*s for tier %s: %s",
-                (int) keylen, key, buf_cstring(mr->buf), cyrusdb_strerror(r));
+                (int) keylen, key, buf_cstring(rock->buf), cyrusdb_strerror(r));
     }
     return r;
 }
 
-struct migrate_indexed_rock {
-    struct db *db;
-    struct txn **txnptr;
-    uint32_t key_version;
-};
-
-static int migrate_indexed_cb(void *vrock,
-                              const char *key, size_t keylen,
-                              const char *data, size_t datalen)
-{
-    struct migrate_indexed_rock *rock = vrock;
-
-    /* Don't touch entries with current keys */
-    if (*key == '*') {
-        return 0;
-    }
-
-    /* Remove legacy cachetier entries */
-    if (*key == '#' && rock->key_version == 0) {
-        return cyrusdb_delete(rock->db, key, keylen, rock->txnptr, /*force*/1);
-    }
-
-    struct buf buf = BUF_INITIALIZER;
-    char *mboxname = NULL;
-    uint32_t uidvalidity = 0;
-    mbentry_t *mbentry = NULL;
-    int r = 0;
-
-    /* Keep a local copy of data */
-    buf_setmap(&buf, data, datalen);
-    char *mydata = buf_release(&buf);
-
-    /* Parse key formatted as <mboxname>.<uidvalidity> */
-    buf_setmap(&buf, key, keylen);
-    const char *dot = strrchr(buf_cstring(&buf), '.');
-    if (dot > buf_base(&buf) && dot < buf_base(&buf) + buf_len(&buf)) {
-        const char *p = NULL;
-        if (parseuint32(dot + 1, &p, &uidvalidity) == 0 && *p == '\0') {
-            buf_truncate(&buf, dot - buf_base(&buf));
-            buf_cstring(&buf);
-            mboxname = buf_release(&buf);
-        }
-    }
-    if (!mboxname) {
-        syslog(LOG_ERR, "migrate_indexed_cb: can't parse entry: %.*s",
-                (int) keylen, key);
-        r = CYRUSDB_INTERNAL;
-        goto done;
-    }
-
-    /* Remove legacy entry */
-    r = cyrusdb_delete(rock->db, key, keylen, rock->txnptr, /*force*/1);
-    if (r) {
-        syslog(LOG_DEBUG, "migrate_indexed_cb: can't delete %.*s",
-                (int) keylen, key);
-        goto done;
-    }
-
-    /* Now key and data buffers are invalid, so don't use them! */
-
-    /* Lookup mailbox entry */
-    r = mboxlist_lookup(mboxname, &mbentry, NULL);
-    if (r && r != IMAP_MAILBOX_NONEXISTENT) {
-        syslog(LOG_ERR, "migrate_indexed_cb: can't lookup mailbox %s: %s",
-                mboxname, error_message(r));
-        r = CYRUSDB_INTERNAL;
-        goto done;
-    } else if (r == IMAP_MAILBOX_NONEXISTENT) {
-        mbentry = NULL;
-        r = 0;
-    }
-
-    /* Only migrate current mailbox entries */
-    if (mbentry && uidvalidity == mbentry->uidvalidity) {
-        buf_printf(&buf, "*M*%s*", mbentry->uniqueid);
-        r = cyrusdb_store(rock->db, buf_base(&buf), buf_len(&buf),
-                          mydata, datalen, rock->txnptr);
-        if (r) {
-            syslog(LOG_ERR, "migrate_indexed_cb: can't store %s: %s",
-                    buf_cstring(&buf), error_message(r));
-            goto done;
-        }
-    }
-
-done:
-    mboxlist_entry_free(&mbentry);
-    buf_free(&buf);
-    free(mboxname);
-    free(mydata);
-    return r;
-}
-
-static int read_indexversion(struct db *db, int *versionptr, struct txn **txnptr)
+static int read_dbversion(struct db *db, int *dbversionptr, struct txn **txnptr)
 {
     const char *data = NULL;
     size_t datalen = 0;
-    *versionptr = 0;
+    *dbversionptr = 0;
 
     int r = cyrusdb_fetch(db, "*V*", 3, &data, &datalen, txnptr);
     if (r && r != CYRUSDB_NOTFOUND) return r;
 
     if (!r) {
         bit64 num;
-        if (parsenum(data, NULL, datalen, &num) || num > INDEXEDDB_KEY_VERSION) {
+        if (parsenum(data, NULL, datalen, &num) || num > INDEXEDDB_VERSION) {
             syslog(LOG_ERR, "search_xapian: bogus version entry: %.*s",
                     (int) datalen, data);
             return CYRUSDB_INTERNAL;
         }
-        *versionptr = (int) num;
+        *dbversionptr = (int) num;
     }
     return 0;
 }
 
-/* Open the cyrus.indexed.db located at fname, passing flags to cyrusdb.
- *
- * Any entries with legacy keys are migrated to the latest key version.
- * The returned database is write-locked, and flags must not contain
- * the CYRUSDB_SHARED flag. */
-/* XXX this API should allow shared locks if the db backend supports them */
-static int open_indexed(const char *fname, int flags, struct db **dbptr)
+/* Open the cyrus.indexed.db located at fname, passing flags to cyrusdb. */
+static int open_indexed(const char *fname, int *dbversionptr, struct db **dbptr)
 {
 
     struct db *db = NULL;
-    struct txn *txn = NULL;
-    int key_version = 0;
+    int dbversion;
     int r = 0;
 
-    assert(!(flags & CYRUSDB_SHARED));
-
-    r = cyrusdb_open(config_getstring(IMAPOPT_SEARCH_INDEXED_DB),
-            fname, flags, &db);
+    r = cyrusdb_open(config_getstring(IMAPOPT_SEARCH_INDEXED_DB), fname, 0, &db);
     if (r) return r;
 
-    /* Read the index version */
-    r = read_indexversion(db, &key_version, NULL);
-    if (!r && key_version != INDEXEDDB_KEY_VERSION) {
-        /* Start a write transaction */
-        r = read_indexversion(db, &key_version, &txn);
-    }
+    r = read_dbversion(db, &dbversion, NULL);
     if (r) return r;
 
-    /* Migrate legacy keys, if any */
-    if (key_version != INDEXEDDB_KEY_VERSION) {
-        struct migrate_indexed_rock rock = { db, &txn, key_version };
-        r = cyrusdb_foreach(db, NULL, 0, NULL, migrate_indexed_cb, &rock, &txn);
-        if (r) goto done;
-
-        /* Store the current key version */
-        struct buf buf = BUF_INITIALIZER;
-        buf_printf(&buf, "%d", INDEXEDDB_KEY_VERSION);
-        r = cyrusdb_store(db, "*V*", 3, buf_base(&buf), buf_len(&buf), &txn);
-        buf_free(&buf);
-        if (r) goto done;
-    }
-
-    r = cyrusdb_commit(db, txn);
-    txn = NULL;
-
-done:
-    if (r && txn) {
-        cyrusdb_abort(db, txn);
-        txn = NULL;
-    }
-    if (r && db) {
-        cyrusdb_close(db);
-        db = NULL;
-    }
     *dbptr = db;
+    *dbversionptr = dbversion;
+    return r;
+}
+
+static int open_indexed_create(const char *userid, const char *fname,
+                               int *dbversionptr, struct db **dbptr)
+{
+    struct db *db = NULL;
+    int dbversion;
+    int r = 0;
+
+    /* Open or create database */
+    r = cyrusdb_open(config_getstring(IMAPOPT_SEARCH_INDEXED_DB), fname, 0, &db);
+    if (!r) {
+        r = read_dbversion(db, &dbversion, NULL);
+        if (!r) {
+            *dbptr = db;
+            *dbversionptr = dbversion;
+        }
+    }
+    else if (r == CYRUSDB_NOTFOUND) {
+        r = cyrusdb_open(config_getstring(IMAPOPT_SEARCH_INDEXED_DB), fname,
+                CYRUSDB_CREATE, &db);
+    }
+    if (r) return r;
+
+    /* Write db version based on legacy flag on user inbox */
+    char *inboxname = mboxname_user_mbox(userid, NULL);
+    mbentry_t *mbentry = NULL;
+    r = mboxlist_lookup(inboxname, &mbentry, NULL);
+    free(inboxname);
+    if (!r && !(mbentry->mbtype & MBTYPE_LEGACY_DIRS)) {
+        struct buf buf = BUF_INITIALIZER;
+        struct txn *txn = NULL;
+
+        buf_printf(&buf, "%d", INDEXEDDB_VERSION);
+        r = cyrusdb_store(db, "*V*", 3, buf_base(&buf), buf_len(&buf), &txn);
+        buf_reset(&buf);
+        if (!r) {
+            *dbversionptr = INDEXEDDB_VERSION;
+            *dbptr = db;
+            cyrusdb_commit(db, txn);
+        }
+        else {
+            xsyslog(LOG_ERR, "could not store version record",
+                    "fname=<%s> dberror=<%s>", fname, cyrusdb_strerror(r));
+            cyrusdb_abort(db, txn);
+        }
+
+        buf_free(&buf);
+    }
+    cyrusdb_close(db);
+
     return r;
 }
 
@@ -793,7 +722,8 @@ done:
  *
  * Returns 0 on success or a cyrusdb error code.
  */
-static int cache_indexed(const strarray_t *activedirs,
+static int cache_indexed(const char *userid,
+                         const strarray_t *activedirs,
                          const strarray_t *activetiers,
                          int verbose)
 {
@@ -801,6 +731,7 @@ static int cache_indexed(const strarray_t *activedirs,
     struct db *dst_db = NULL;
     struct buf path = BUF_INITIALIZER;
     struct buf key = BUF_INITIALIZER;
+    int dbversion;
     int r = 0;
     int i;
 
@@ -812,7 +743,7 @@ static int cache_indexed(const strarray_t *activedirs,
 
     /* Open destination database */
     buf_printf(&path, "%s%s", strarray_nth(activedirs, 0), INDEXEDDB_FNAME);
-    r = open_indexed(buf_cstring(&path), CYRUSDB_CREATE, &dst_db);
+    r = open_indexed_create(userid, buf_cstring(&path), &dbversion, &dst_db);
     if (r) {
         syslog(LOG_ERR, "cache_indexed: can't open destination db %s: %s",
                 buf_cstring(&path), cyrusdb_strerror(r));
@@ -830,7 +761,12 @@ static int cache_indexed(const strarray_t *activedirs,
 
         /* Check if the tier is already merged. We assume a tier is merged
          * if at least one entry with its tier prefix exists. */
-        buf_printf(&key, "*T*%s*", strarray_nth(activetiers, i));
+        if (dbversion >= 2) {
+            buf_printf(&key, "*T*%s*", strarray_nth(activetiers, i));
+        }
+        else {
+            buf_printf(&key, "#c.%s#", strarray_nth(activetiers, i));
+        }
         r = cyrusdb_foreach(dst_db, buf_base(&key), buf_len(&key),
                             NULL, tierexists_cb, &verbose, NULL);
         if (r == CYRUSDB_DONE) {
@@ -845,7 +781,8 @@ static int cache_indexed(const strarray_t *activedirs,
 
         /* Open source database */
         buf_printf(&path, "%s%s", strarray_nth(activedirs, i), INDEXEDDB_FNAME);
-        r = open_indexed(buf_cstring(&path), 0, &src_db);
+        int src_dbversion;
+        r = open_indexed(buf_cstring(&path), &src_dbversion, &src_db);
         if (r == CYRUSDB_NOTFOUND) {
             if (verbose) {
                 syslog(LOG_INFO, "cache_indexed: no db found at %s",
@@ -856,9 +793,11 @@ static int cache_indexed(const strarray_t *activedirs,
         }
         else if (r) goto out;
 
+        // FIXME check src_dbversion dst_dbversion
+
         /* Merge the entries from source into destination. The first
          * store in the callback will create a write transaction. */
-        struct cachetier_rock rock = { &key, dst_db, NULL };
+        struct cachetier_rock rock = { &key, dst_db, NULL, dbversion };
         r = cyrusdb_foreach(src_db, NULL, 0, NULL, cachetier_cb, &rock, NULL);
         cyrusdb_close(src_db);
         src_db = NULL;
@@ -903,18 +842,21 @@ out:
  * Returns 0 on success or a cyrusdb error code.
  */
 static int read_indexed(const strarray_t *activedirs,
-                       const strarray_t *activetiers,
-                       const char *uniqueid,
-                       struct seqset *res,
-                       int do_cache,
-                       int verbose)
+                        const strarray_t *activetiers,
+                        const char *mboxname,
+                        uint32_t uidvalidity,
+                        const char *uniqueid,
+                        struct seqset *res,
+                        int do_cache,
+                        int verbose)
 {
     struct db *db = NULL;
-    struct db *srcdb = NULL;
+    struct db *src_db = NULL;
     struct buf path = BUF_INITIALIZER;
     struct buf key = BUF_INITIALIZER;
     const char *data = NULL;
     size_t datalen = 0;
+    int dbversion;
     int r = 0;
     int i;
 
@@ -924,15 +866,19 @@ static int read_indexed(const strarray_t *activedirs,
         return 0;
     }
 
+    mbname_t *mbname = mbname_from_intname(mboxname);
+    mbname_truncate_boxes(mbname, 0);
+    const char *userid = mbname_intname(mbname);
+
     if (do_cache) {
         /* Merge search tiers first */
-        r = cache_indexed(activedirs, activetiers, verbose);
-        if (r) return r;
+        r = cache_indexed(userid, activedirs, activetiers, verbose);
+        if (r) goto out;
     }
 
     /* Open database */
     buf_printf(&path, "%s%s", strarray_nth(activedirs, 0), INDEXEDDB_FNAME);
-    r = open_indexed(buf_cstring(&path), CYRUSDB_CREATE, &db);
+    r = open_indexed_create(userid, buf_cstring(&path), &dbversion, &db);
     if (r) {
         syslog(LOG_ERR, "read_indexed: can't open db %s: %s",
                 buf_cstring(&path), cyrusdb_strerror(r));
@@ -940,7 +886,13 @@ static int read_indexed(const strarray_t *activedirs,
     }
 
     /* Lookup entry in top tier */
-    buf_printf(&key, "*M*%s*", uniqueid);
+    if (dbversion >= 2) {
+        buf_printf(&key, "*M*%s*", uniqueid);
+    }
+    else {
+        buf_printf(&key, "%s.%u", mboxname, uidvalidity);
+    }
+
     r = cyrusdb_fetch(db, key.s, key.len, &data, &datalen, (struct txn **)NULL);
     if (r && r != CYRUSDB_NOTFOUND) {
         goto out;
@@ -959,30 +911,42 @@ static int read_indexed(const strarray_t *activedirs,
 
     /* Lookup entries from lower tiers */
     for (i = 1; i < activedirs->count; i++) {
-        if (srcdb) {
-            cyrusdb_close(srcdb);
-            srcdb = NULL;
+        if (src_db) {
+            cyrusdb_close(src_db);
+            src_db = NULL;
         }
 
         /* First look in the cached tiers in the top tier database. */
         buf_reset(&key);
-        buf_printf(&key, "*T*%s*", strarray_nth(activetiers, i));
-        buf_printf(&key, "*M*%s*", uniqueid);
+        if (dbversion >= 2) {
+            buf_printf(&key, "*T*%s*", strarray_nth(activetiers, i));
+            buf_printf(&key, "*M*%s*", uniqueid);
+        }
+        else {
+            buf_printf(&key, "#c.%s#%s.%u", strarray_nth(activetiers, i), mboxname, uidvalidity);
+        }
         r = cyrusdb_fetch(db, key.s, key.len, &data, &datalen, (struct txn **)NULL);
 
         /* Fall back to the lower tiers if we haven't merged all tiers. */
         if (r == CYRUSDB_NOTFOUND && !do_cache) {
             buf_reset(&path);
             buf_printf(&path, "%s%s", strarray_nth(activedirs, i), INDEXEDDB_FNAME);
-            r = open_indexed(buf_cstring(&path), 0, &srcdb);
+            int src_dbversion;
+            r = open_indexed(buf_cstring(&path), &src_dbversion, &src_db);
             if (r) {
                 syslog(LOG_ERR, "read_indexed: can't open db %s: %s",
                         buf_cstring(&path), cyrusdb_strerror(r));
                 goto out;
             }
             buf_reset(&key);
-            buf_printf(&key, "*M*%s*", uniqueid);
-            r = cyrusdb_fetch(srcdb, key.s, key.len, &data, &datalen, (struct txn **)NULL);
+            // FIXME dbversion != src_dbversion
+            if (dbversion >= 2) {
+                buf_printf(&key, "*M*%s*", uniqueid);
+            }
+            else {
+                buf_printf(&key, "%s.%u", mboxname, uidvalidity);
+            }
+            r = cyrusdb_fetch(src_db, key.s, key.len, &data, &datalen, (struct txn **)NULL);
         }
         if (r && r != CYRUSDB_NOTFOUND) {
             goto out;
@@ -1010,11 +974,12 @@ out:
     if (db) {
         cyrusdb_close(db);
     }
-    if (srcdb) {
-        cyrusdb_close(srcdb);
+    if (src_db) {
+        cyrusdb_close(src_db);
     }
     buf_free(&key);
     buf_free(&path);
+    mbname_free(&mbname);
 
     return r;
 }
@@ -1052,7 +1017,7 @@ static int store_indexed(struct db *db, struct txn **tid,
 
     if (!str) return 0;
 
-    buf_printf(&data, "%u %s", INDEXEDDB_VERSION, str);
+    buf_printf(&data, "%u %s", INDEXEDDB_VAL_VERSION, str);
     r = cyrusdb_store(db, key, keylen, data.s, data.len, tid);
     buf_free(&data);
     free(str);
@@ -1064,6 +1029,8 @@ static int store_indexed(struct db *db, struct txn **tid,
  * messages indexed into it, add the sequence of UIDs to the
  * record for the given mailbox and uidvalidity */
 static int write_indexed(const char *dir,
+                         const char *mboxname,
+                         uint32_t uidvalidity,
                          const char *uniqueid,
                          struct seqset *seq,
                          int verbose)
@@ -1072,7 +1039,11 @@ static int write_indexed(const char *dir,
     struct buf key = BUF_INITIALIZER;
     struct db *db = NULL;
     struct txn *txn = NULL;
+    int dbversion;
     int r = 0;
+    mbname_t *mbname = mbname_from_intname(mboxname);
+    mbname_truncate_boxes(mbname, 0);
+    const char *userid = mbname_intname(mbname);
 
     buf_reset(&path);
     buf_printf(&path, "%s%s", dir, INDEXEDDB_FNAME);
@@ -1084,10 +1055,16 @@ static int write_indexed(const char *dir,
         free(str);
     }
 
-    buf_printf(&key, "*M*%s*", uniqueid);
 
-    r = open_indexed(buf_cstring(&path), CYRUSDB_CREATE, &db);
+    r = open_indexed_create(userid, buf_cstring(&path), &dbversion, &db);
     if (r) goto out;
+
+    if (dbversion >= 2) {
+        buf_printf(&key, "*M*%s*", uniqueid);
+    }
+    else {
+        buf_printf(&key, "%s.%u", mboxname, uidvalidity);
+    }
 
     r = store_indexed(db, &txn, key.s, key.len, seq);
     if (!r)
@@ -1097,10 +1074,190 @@ static int write_indexed(const char *dir,
 
 out:
     if (db) cyrusdb_close(db);
+    mbname_free(&mbname);
     buf_free(&path);
     buf_free(&key);
     return r;
 }
+
+struct upgrade_indexed_rock {
+    struct db *db;
+    struct txn **txnptr;
+    struct buf *mydata;
+};
+
+static int upgrade_indexed_cb(void *vrock,
+                              const char *key, size_t keylen,
+                              const char *data, size_t datalen)
+{
+    struct upgrade_indexed_rock *rock = vrock;
+
+    /* Don't touch entries with current keys */
+    if (*key == '*') {
+        return 0;
+    }
+
+    /* Remove legacy cachetier entries */
+    if (*key == '#') {
+        return cyrusdb_delete(rock->db, key, keylen, rock->txnptr, 1);
+    }
+
+    struct buf buf = BUF_INITIALIZER;
+    char *mboxname = NULL;
+    uint32_t uidvalidity = 0;
+    mbentry_t *mbentry = NULL;
+    int r = 0;
+
+    /* Keep a local copy of data */
+    buf_setmap(rock->mydata, data, datalen);
+
+    /* Parse key formatted as <mboxname>.<uidvalidity> */
+    buf_setmap(&buf, key, keylen);
+    const char *dot = strrchr(buf_cstring(&buf), '.');
+    if (dot > buf_base(&buf) && dot < buf_base(&buf) + buf_len(&buf)) {
+        const char *p = NULL;
+        if (parseuint32(dot + 1, &p, &uidvalidity) == 0 && *p == '\0') {
+            buf_truncate(&buf, dot - buf_base(&buf));
+            buf_cstring(&buf);
+            mboxname = buf_release(&buf);
+        }
+    }
+    if (!mboxname) {
+        xsyslog(LOG_ERR, "can't parse entry", "entry=<%.*s>",
+                (int) keylen, key);
+        r = CYRUSDB_INTERNAL;
+        goto done;
+    }
+
+    /* Remove legacy entry */
+    r = cyrusdb_delete(rock->db, key, keylen, rock->txnptr, /*force*/1);
+    if (r) {
+        xsyslog(LOG_DEBUG, "can't delete entry", "entry=<%.*s>",
+                (int) keylen, key);
+        goto done;
+    }
+
+    /* Now key and data buffers are invalid, so don't use them! */
+
+    /* Lookup mailbox entry */
+    r = mboxlist_lookup(mboxname, &mbentry, NULL);
+    if (r && r != IMAP_MAILBOX_NONEXISTENT) {
+        xsyslog(LOG_ERR, "can't lookup mailbox", "mboxname=<%s>", mboxname);
+        r = CYRUSDB_INTERNAL;
+        goto done;
+    } else if (r == IMAP_MAILBOX_NONEXISTENT) {
+        mbentry = NULL;
+        r = 0;
+    }
+
+    /* Only migrate current mailbox entries */
+    if (mbentry && uidvalidity == mbentry->uidvalidity) {
+        buf_printf(&buf, "*M*%s*", mbentry->uniqueid);
+        r = cyrusdb_store(rock->db, buf_base(&buf), buf_len(&buf),
+                buf_base(rock->mydata), buf_len(rock->mydata), rock->txnptr);
+        if (r) {
+            xsyslog(LOG_ERR, "can't store entry", "entry=<%s>",
+                    buf_cstring(&buf));
+            goto done;
+        }
+    }
+
+done:
+    mboxlist_entry_free(&mbentry);
+    buf_free(&buf);
+    free(mboxname);
+    return r;
+}
+
+static int upgrade(const char *userid)
+{
+    char *inboxname = mboxname_user_mbox(userid, NULL);
+    struct mailbox *inbox = NULL;
+    struct buf buf = BUF_INITIALIZER;
+
+    struct mappedfile *activefile = NULL;
+    strarray_t *active = NULL;
+    strarray_t *activedirs = NULL;
+    strarray_t *activetiers = NULL;
+
+    int r = mailbox_open_irl(inboxname, &inbox);
+    if (r) {
+        xsyslog(LOG_ERR, "can not open inbox", "inboxname=<%s>", inboxname);
+        goto out;
+    }
+
+    // FIXME namespace lock?
+
+    /* need to hold a read-only lock on the activefile file
+     * to ensure no databases are deleted out from under us */
+    r = activefile_open(inbox->name, inbox->part, &activefile, AF_LOCK_READ, &active);
+    if (r) goto out;
+
+    /* only try to open directories with databases in them */
+    activedirs = activefile_resolve(inbox->name, inbox->part, active,
+            /*dostat*/1, &activetiers);
+
+    int i;
+    for (i = 0; i < strarray_size(activedirs); i++) {
+        buf_setcstr(&buf, strarray_nth(activedirs, i));
+        buf_appendcstr(&buf, INDEXEDDB_FNAME);
+
+        char *fname = xstrdup(buf_cstring(&buf));
+        struct db *db = NULL;
+        struct txn *txn = NULL;
+
+        /* Open database */
+        int dbversion;
+        r = open_indexed(fname, &dbversion, &db);
+        if (r) {
+            xsyslog(LOG_ERR, "can not open database", "fname=<%s> dberror=<%s>",
+                    fname, cyrusdb_strerror(r));
+            goto next;
+        }
+        else if (dbversion == INDEXEDDB_VERSION) {
+            xsyslog(LOG_INFO, "database already at current version - skipping",
+                    "fname=<%s> dbversion=<%d>", fname, dbversion);
+            goto next;
+        }
+
+        /* Upgrade database entries */
+        struct upgrade_indexed_rock rock = { db, &txn, &buf };
+        r = cyrusdb_foreach(db, NULL, 0, NULL, upgrade_indexed_cb, &rock, &txn);
+        buf_reset(&buf);
+        if (r) goto next;
+
+        /* Write version entry */
+        buf_printf(&buf, "%d", INDEXEDDB_VERSION);
+        r = cyrusdb_store(db, "*V*", 3, buf_base(&buf), buf_len(&buf), &txn);
+        buf_reset(&buf);
+        if (r) {
+            xsyslog(LOG_ERR, "could not store version record",
+                    "fname=<%s> dberror=<%s>", fname, cyrusdb_strerror(r));
+            goto next;
+        }
+
+        /* All done */
+        r = cyrusdb_commit(db, txn);
+        if (r) goto next;
+        txn = NULL;
+
+next:
+        if (r && txn) {
+            cyrusdb_abort(db, txn);
+        }
+        if (db) cyrusdb_close(db);
+        db = NULL;
+        txn = NULL;
+        free(fname);
+    }
+
+out:
+    mailbox_close(&inbox);
+    free(inboxname);
+    buf_free(&buf);
+    return r;
+}
+
 
 /* ====================================================================== */
 
@@ -1997,8 +2154,9 @@ static search_builder_t *begin_search(struct mailbox *mailbox, int opts)
      * for unindexed messages */
     // TODO also handle for guidsearch
     bb->indexed = seqset_init(0, SEQ_MERGE);
-    r = read_indexed(bb->lock.activedirs, bb->lock.activetiers, mailbox->uniqueid,
-                     bb->indexed, /*do_cache*/0, /*verbose*/0);
+    r = read_indexed(bb->lock.activedirs, bb->lock.activetiers,
+            mailbox->name, mailbox->i.uidvalidity, mailbox->uniqueid,
+            bb->indexed, /*do_cache*/0, /*verbose*/0);
     if (r) goto out;
 
 out:
@@ -2196,8 +2354,8 @@ static int flush(search_text_receiver_t *rx)
      * there are unindexed messages should we fail to index */
     if (tr->indexed) {
         r = write_indexed(strarray_nth(tr->activedirs, 0),
-                          tr->super.mailbox->uniqueid, tr->indexed,
-                          tr->super.verbose);
+                tr->super.mailbox->name, tr->super.mailbox->i.uidvalidity,
+                tr->super.mailbox->uniqueid, tr->indexed, tr->super.verbose);
         if (r) goto out;
     }
 
@@ -2622,8 +2780,9 @@ static int begin_mailbox_update(search_text_receiver_t *rx,
     tr->oldindexed = seqset_init(0, SEQ_MERGE);
 
     if ((flags & (SEARCH_UPDATE_INCREMENTAL|SEARCH_UPDATE_AUDIT))) {
-        r = read_indexed(tr->activedirs, tr->activetiers, mailbox->uniqueid,
-                         tr->oldindexed, /*do_cache*/1, tr->super.verbose);
+        r = read_indexed(tr->activedirs, tr->activetiers,
+                mailbox->name, mailbox->i.uidvalidity, mailbox->uniqueid,
+                tr->oldindexed, /*do_cache*/1, tr->super.verbose);
         if (r) goto out;
     }
 
@@ -2686,7 +2845,7 @@ static int is_indexed_cb(const conv_guidrec_t *rec, void *rock)
     if (rec->version > CONV_GUIDREC_BYNAME_VERSION) {
         mboxuniqueid = rec->mailbox;
     }
-    else {
+// FIXME    else {
         r = mboxlist_lookup(rec->mailbox, &mbentry, NULL);
         if (r) {
             syslog(LOG_ERR, "is_indexed_cb: mboxlist_lookup %s failed: %s",
@@ -2694,10 +2853,11 @@ static int is_indexed_cb(const conv_guidrec_t *rec, void *rock)
             goto out;
         }
         mboxuniqueid = mbentry->uniqueid;
-    }
+// FIXME    }
 
-    r = read_indexed(tr->activedirs, tr->activetiers, mboxuniqueid,
-                     seq, /*do_cache*/1, tr->super.verbose);
+    r = read_indexed(tr->activedirs, tr->activetiers,
+            mbentry->name, mbentry->uidvalidity, mboxuniqueid,
+            seq, /*do_cache*/1, tr->super.verbose);
     if (mbentry) mboxlist_entry_free(&mbentry);
     if (r) {
         syslog(LOG_ERR, "is_indexed_cb: read_indexed %s failed: %s",
@@ -3192,19 +3352,32 @@ static void free_mbfilter(struct mbfilter *filter)
     }
 }
 
-static int copyindexed_cb(void *rock,
+struct copyindexed_rock {
+    struct mbfilter *filter;
+    int dbversion;
+};
+
+static int copyindexed_cb(void *vrock,
                          const char *key, size_t keylen,
                          const char *data, size_t datalen)
 {
-    /* Ignore all but mailbox entries */
-    if (keylen < 3 || strncmp(key, "*M*", 3)) return 0;
+    struct copyindexed_rock *rock = vrock;
+
+    if (rock->dbversion >= 2) {
+        /* Ignore all but mailbox entries */
+        if (keylen < 3 || strncmp(key, "*M*", 3)) return 0;
+    }
+    else {
+        /* Ignore cached entries */
+        if (*key == '#') return 0;
+    }
 
     /* Copy the record */
-    struct mbfilter *filter = (struct mbfilter *)rock;
     struct seqset *seq = parse_indexed(data, datalen);
     int r = 0;
     if (seq) {
-        r = store_indexed(filter->indexeddb, filter->tid, key, keylen, seq);
+        r = store_indexed(rock->filter->indexeddb, rock->filter->tid,
+                key, keylen, seq);
         seqset_free(seq);
     }
 
@@ -3240,6 +3413,7 @@ static int create_filter(const strarray_t *srcpaths, const strarray_t *destpaths
     int r = 0;
     int i;
     struct conversations_state *cstate = NULL;
+    int dbversion;
 
     memset(filter, 0, sizeof(struct mbfilter));
     filter->destpaths = destpaths;
@@ -3252,21 +3426,24 @@ static int create_filter(const strarray_t *srcpaths, const strarray_t *destpaths
     buf_reset(&buf);
     buf_printf(&buf, "%s%s", strarray_nth(destpaths, 0), INDEXEDDB_FNAME);
 
-    r = open_indexed(buf_cstring(&buf), CYRUSDB_CREATE, &filter->indexeddb);
+    r = open_indexed_create(userid, buf_cstring(&buf), &dbversion,
+            &filter->indexeddb);
     if (r) {
         printf("ERROR: failed to open indexed %s\n", buf_cstring(&buf));
         goto done;
     }
     for (i = 0; i < srcpaths->count; i++) {
         struct db *db = NULL;
+        int dbversion;
         buf_reset(&buf);
         buf_printf(&buf, "%s%s", strarray_nth(srcpaths, i), INDEXEDDB_FNAME);
-        r = open_indexed(buf_cstring(&buf), 0, &db);
+        r = open_indexed(buf_cstring(&buf), &dbversion, &db);
         if (r) {
             r = 0;
             continue;
         }
-        r = cyrusdb_foreach(db, "", 0, NULL, copyindexed_cb, filter, NULL);
+        struct copyindexed_rock rock = { filter, dbversion };
+        r = cyrusdb_foreach(db, "", 0, NULL, copyindexed_cb, &rock, NULL);
         cyrusdb_close(db);
         if (r) {
             printf("ERROR: failed to process indexed db %s\n", strarray_nth(srcpaths, i));
@@ -4121,6 +4298,7 @@ const struct search_engine xapian_search_engine = {
     delete_user,  /* XXX: fixme */
     check_config,
     langstats,
-    can_match
+    can_match,
+    upgrade
 };
 
