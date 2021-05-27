@@ -481,10 +481,6 @@ static json_t *getcalendar_defaultalerts(const char *userid,
 
 static json_t *calendarrights_to_jmap(int rights, int is_owner)
 {
-    static int writerights = DACL_WRITECONT|DACL_WRITEPROPS;
-    static int mayupdateprivate = DACL_PROPRSRC|ACL_SETSEEN;
-    static int mayupdateall = DACL_WRITECONT|DACL_WRITEPROPS|DACL_CHANGEORG;
-    static int mayremoveall = DACL_RMRSRC|DACL_CHANGEORG;
     if (is_owner) rights |= JACL_RSVP;
 
     return json_pack("{s:b s:b s:b s:b s:b s:b s:b s:b s:b s:b s:b}",
@@ -493,7 +489,7 @@ static json_t *calendarrights_to_jmap(int rights, int is_owner)
             "mayReadItems",
             (rights & JACL_READITEMS) == JACL_READITEMS,
             "mayAddItems",
-            (rights & JACL_ADDITEMS) == JACL_ADDITEMS,
+            (rights & (JACL_ADDITEMS|JACL_SETMETADATA)) == (JACL_ADDITEMS|JACL_SETMETADATA),
             "mayRSVP",
             (rights & JACL_RSVP) == JACL_RSVP,
             "mayDelete",
@@ -501,15 +497,15 @@ static json_t *calendarrights_to_jmap(int rights, int is_owner)
             "mayAdmin",
             (rights & JACL_ADMIN) == JACL_ADMIN,
             "mayUpdatePrivate",
-            (rights & mayupdateprivate) == mayupdateprivate,
+            (rights & JACL_UPDATEPRIVATE) == JACL_UPDATEPRIVATE,
             "mayUpdateOwn",
-            (rights & writerights) == writerights,
+            (rights & JACL_UPDATEOWN) == JACL_UPDATEOWN,
             "mayUpdateAll",
-            (rights & mayupdateall) == mayupdateall,
+            (rights & JACL_WRITE) == JACL_WRITE,
             "mayRemoveOwn",
-            (rights & DACL_RMRSRC) == DACL_RMRSRC,
+            (rights & JACL_REMOVEOWN) == JACL_REMOVEOWN,
             "mayRemoveAll",
-            (rights & mayremoveall) == mayremoveall);
+            (rights & JACL_REMOVEITEMS) == JACL_REMOVEITEMS);
 }
 
 static json_t *calendarrights_to_sharewith(int rights)
@@ -519,14 +515,17 @@ static json_t *calendarrights_to_sharewith(int rights)
 
 static int calendar_sharewith_to_rights(int rights, json_t *jsharewith)
 {
-    static int writerights = DACL_WRITECONT|DACL_WRITEPROPS;
-    static int mayupdateprivate = DACL_PROPRSRC|ACL_SETSEEN;
-    static int mayupdateall = DACL_WRITECONT|DACL_WRITEPROPS|DACL_CHANGEORG;
-    static int mayremoveall = DACL_RMRSRC|DACL_CHANGEORG;
     int newrights = rights;
 
+    /* Apply shareWith in two passes: in the first, remove
+     * rights that were explicitly set to false (or null).
+     * In the second pass, add rights that were set to true.
+     * This prevents that the order of rights in the patch
+     * impacts the resulting ACL mask. */
     json_t *jval;
     const char *name;
+    int iteration = 1;
+calendar_sharewith_to_rights_iter:
     json_object_foreach(jsharewith, name, jval) {
         int mask;
         if (!strcmp("mayReadFreeBusy", name))
@@ -534,7 +533,7 @@ static int calendar_sharewith_to_rights(int rights, json_t *jsharewith)
         else if (!strcmp("mayReadItems", name))
             mask = JACL_READITEMS;
         else if (!strcmp("mayAddItems", name))
-            mask = JACL_ADDITEMS;
+            mask = JACL_ADDITEMS|JACL_SETMETADATA;
         else if (!strcmp("mayRSVP", name))
             mask = JACL_RSVP;
         else if (!strcmp("mayDelete", name))
@@ -542,22 +541,28 @@ static int calendar_sharewith_to_rights(int rights, json_t *jsharewith)
         else if (!strcmp("mayAdmin", name))
             mask = JACL_ADMIN;
         else if (!strcmp("mayUpdatePrivate", name))
-            mask = mayupdateprivate;
+            mask = JACL_UPDATEPRIVATE;
         else if (!strcmp("mayUpdateOwn", name))
-            mask = writerights;
+            mask = JACL_UPDATEOWN;
         else if (!strcmp("mayUpdateAll", name))
-            mask = mayupdateall;
+            mask = JACL_WRITE;
         else if (!strcmp("mayRemoveOwn", name))
-            mask = DACL_RMRSRC;
+            mask = JACL_REMOVEOWN;
         else if (!strcmp("mayRemoveAll", name))
-            mask = mayremoveall;
+            mask = JACL_REMOVEITEMS;
         else
             continue;
 
-        if (json_boolean_value(jval))
-            newrights |= mask;
-        else
+        if (iteration == 1 && !json_boolean_value(jval))
             newrights &= ~mask;
+        else if (iteration == 2 && json_boolean_value(jval))
+            newrights |= mask;
+    }
+    if (++iteration == 2) goto calendar_sharewith_to_rights_iter;
+
+    /* Allow to set calendar properties */
+    if (newrights & ~JACL_READFB) {
+        newrights |= ACL_WRITE;
     }
 
     return newrights;
@@ -4794,6 +4799,7 @@ static int setcalendarevents_apply_patch(struct jmapical_jmapcontext *jmapctx,
                                          const char *recurid,
                                          json_t *invalid,
                                          strarray_t *schedule_addresses,
+                                         int may_updateprivate_only,
                                          icalcomponent **newical,
                                          icaltimezone *floatingtz,
                                          json_t *update,
@@ -5082,16 +5088,23 @@ static int setcalendarevents_apply_patch(struct jmapical_jmapcontext *jmapctx,
         }
     }
 
-    /* Determine if to bump sequence */
+    /* Determine if non-private properties are patched */
     json_t *jdiff = jmap_patchobject_create(old_event, new_event);
     json_object_del(jdiff, "updated");
     if (!eventpatch_updates_peruserprops_only(jdiff, &participant_ids)) {
-        json_int_t oldseq = json_integer_value(json_object_get(old_event, "sequence"));
-        json_int_t newseq = json_integer_value(json_object_get(new_event, "sequence"));
-        if (newseq <= oldseq) {
-            json_int_t newseq = oldseq + 1;
-            json_object_set_new(new_event, "sequence", json_integer(newseq));
-            json_object_set_new(update, "sequence", json_integer(newseq));
+        if (may_updateprivate_only) {
+            /* Reject update */
+            *err = json_pack("{s:s}", "type", "forbidden");
+        }
+        else {
+            /* Bump sequence */
+            json_int_t oldseq = json_integer_value(json_object_get(old_event, "sequence"));
+            json_int_t newseq = json_integer_value(json_object_get(new_event, "sequence"));
+            if (newseq <= oldseq) {
+                json_int_t newseq = oldseq + 1;
+                json_object_set_new(new_event, "sequence", json_integer(newseq));
+                json_object_set_new(update, "sequence", json_integer(newseq));
+            }
         }
     }
     json_decref(jdiff);
@@ -5117,7 +5130,6 @@ static int setcalendarevents_update(jmap_req_t *req,
                                     json_t **err)
 {
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
-    int needrights = JACL_UPDATEITEMS|JACL_SETMETADATA;
     int r = 0;
 
     struct caldav_data *cdata = NULL;
@@ -5134,6 +5146,7 @@ static int setcalendarevents_update(jmap_req_t *req,
     strarray_t schedule_addresses = STRARRAY_INITIALIZER;
     strarray_t del_imapflags = STRARRAY_INITIALIZER;
     json_t *old_event = NULL;
+    int may_updateprivate_only = 0;
 
     /* Validate calendarId */
     const char *calendarId = NULL;
@@ -5167,14 +5180,16 @@ static int setcalendarevents_update(jmap_req_t *req,
         r = IMAP_NOTFOUND;
         goto done;
     }
+    r = 0;
     mboxname = xstrdup(cdata->dav.mailbox);
     resource = xstrdup(cdata->dav.resource);
-
-    /* Check permissions. */
-    if (!jmap_hasrights(req, mboxname, needrights)) {
-        jmap_parser_invalid(&parser, "calendarIds");
-        r = 0;
-        goto done;
+    /* Determine target mailbox */
+    if (calendarId) {
+        dstmboxname = caldav_mboxname(req->accountid, calendarId);
+        if (!strcmp(mboxname, dstmboxname)) {
+            free(dstmboxname);
+            dstmboxname = NULL;
+        }
     }
 
     /* Open mailbox for writing */
@@ -5188,6 +5203,56 @@ static int setcalendarevents_update(jmap_req_t *req,
         syslog(LOG_ERR, "jmap_openmbox(req, %s) failed: %s",
                 mboxname, error_message(r));
         goto done;
+    }
+    if (dstmboxname) {
+        r = jmap_openmbox(req, dstmboxname, &dstmbox, 1);
+        if (r == IMAP_MAILBOX_NONEXISTENT) {
+            jmap_parser_invalid(&parser, "calendarIds");
+            r = 0;
+            goto done;
+        }
+        else if (r) {
+            syslog(LOG_ERR, "jmap_openmbox(req, %s) failed: %s",
+                    dstmboxname, error_message(r));
+            goto done;
+        }
+    }
+
+    get_schedule_addresses(NULL, mboxname, req->userid, &schedule_addresses);
+
+    /* Check permissions. */
+    if (!jmap_hasrights(req, mboxname, JACL_READITEMS)) {
+        jmap_parser_invalid(&parser, "calendarIds");
+        goto done;
+    }
+    if (dstmboxname) {
+        /* Validate permissions for move */
+        if (!jmap_hasrights(req, mboxname, JACL_REMOVEITEMS)) {
+            *err = json_pack("{s:s}", "type", "forbidden");
+            goto done;
+        }
+        if (!jmap_hasrights(req, dstmboxname, JACL_ADDITEMS|JACL_SETMETADATA)) {
+            *err = json_pack("{s:s}", "type", "forbidden");
+            goto done;
+        }
+    }
+    else {
+        /* Validate permissions for update */
+        if (!jmap_hasrights(req, mboxname, JACL_UPDATEITEMS|JACL_SETMETADATA)) {
+            if (jmap_hasrights(req, mboxname, JACL_UPDATEOWN) &&
+                    (!cdata->organizer ||
+                     strarray_find(&schedule_addresses, cdata->organizer, 0) >= 0)) {
+                /* allowed */
+            }
+            else if (jmap_hasrights(req, mboxname, JACL_UPDATEPRIVATE)) {
+                /* allowed, but we'll need verify when we apply the patch */
+                may_updateprivate_only = 1;
+            }
+            else {
+                *err = json_pack("{s:s}", "type", "forbidden");
+                goto done;
+            }
+        }
     }
 
     /* Fetch index record for the resource */
@@ -5244,6 +5309,7 @@ static int setcalendarevents_update(jmap_req_t *req,
             old_event, event_patch,
             oldical, eid->recurid,
             invalid, &schedule_addresses,
+            may_updateprivate_only,
             &ical, floatingtz, update, err);
     icaltimezone_free(floatingtz, 1);
     jmap_calendarcontext_fini(&jmapctx);
@@ -5254,30 +5320,6 @@ static int setcalendarevents_update(jmap_req_t *req,
     }
     else if (r) goto done;
 
-    if (calendarId) {
-        /* Check, if we need to move the event. */
-        dstmboxname = caldav_mboxname(req->accountid, calendarId);
-        if (strcmp(mbox->name, dstmboxname)) {
-            /* Check permissions */
-            if (!jmap_hasrights(req, dstmboxname, needrights)) {
-                jmap_parser_invalid(&parser, "calendarIds");
-                r = 0;
-                goto done;
-            }
-            /* Open destination mailbox for writing. */
-            r = jmap_openmbox(req, dstmboxname, &dstmbox, 1);
-            if (r == IMAP_MAILBOX_NONEXISTENT) {
-                jmap_parser_invalid(&parser, "calendarIds");
-                r = 0;
-                goto done;
-            } else if (r) {
-                syslog(LOG_ERR, "jmap_openmbox(req, %s) failed: %s",
-                        dstmboxname, error_message(r));
-                goto done;
-            }
-        }
-    }
-
     /* Manage attachments */
     int ret = caldav_manage_attachments(req->accountid, ical, oldical);
     if (ret && ret != HTTP_NOT_FOUND) {
@@ -5287,7 +5329,6 @@ static int setcalendarevents_update(jmap_req_t *req,
     }
 
     /* Handle scheduling. */
-    get_schedule_addresses(NULL, mboxname, req->userid, &schedule_addresses);
     if (!(record.system_flags & FLAG_DRAFT) && send_scheduling_messages) {
         r = setcalendarevents_schedule(req, &schedule_addresses,
                                        oldical, ical, JMAP_UPDATE);
@@ -5405,7 +5446,6 @@ static int setcalendarevents_destroy(jmap_req_t *req,
                                      int send_scheduling_messages)
 {
     int r;
-    int needrights = JACL_REMOVEITEMS;
 
     struct caldav_data *cdata = NULL;
     struct mailbox *mbox = NULL;
@@ -5447,14 +5487,20 @@ static int setcalendarevents_destroy(jmap_req_t *req,
     mboxname = xstrdup(cdata->dav.mailbox);
     resource = xstrdup(cdata->dav.resource);
 
+    get_schedule_addresses(NULL, mboxname, req->userid, &schedule_addresses);
+
     /* Check permissions. */
     if (!jmap_hasrights(req, mboxname, JACL_READITEMS)) {
         r = IMAP_NOTFOUND;
         goto done;
     }
-    if (!jmap_hasrights(req, mboxname, needrights)) {
-        r = IMAP_PERMISSION_DENIED;
-        goto done;
+    if (!jmap_hasrights(req, mboxname, JACL_REMOVEITEMS)) {
+        if (!jmap_hasrights(req, mboxname, JACL_REMOVEOWN) ||
+                (cdata->organizer &&
+                 strarray_find(&schedule_addresses, cdata->organizer, 0) < 0)) {
+            r = IMAP_PERMISSION_DENIED;
+            goto done;
+        }
     }
 
     /* Open mailbox for writing */
@@ -5483,7 +5529,6 @@ static int setcalendarevents_destroy(jmap_req_t *req,
     }
 
     /* Handle scheduling. */
-    get_schedule_addresses(NULL, mboxname, req->userid, &schedule_addresses);
     if (!(record.system_flags & FLAG_DRAFT) && send_scheduling_messages) {
         r = setcalendarevents_schedule(req, &schedule_addresses,
                                        oldical, ical, JMAP_DESTROY);
