@@ -5342,30 +5342,6 @@ static int setcalendarevents_update(jmap_req_t *req,
         goto done;
     }
 
-    if (calendarId) {
-        /* Check, if we need to move the event. */
-        dstmboxname = caldav_mboxname(req->accountid, calendarId);
-        if (strcmp(mbox->name, dstmboxname)) {
-            /* Check permissions */
-            if (!jmap_hasrights(req, dstmboxname, needrights)) {
-                jmap_parser_invalid(&parser, "calendarIds");
-                r = 0;
-                goto done;
-            }
-            /* Open destination mailbox for writing. */
-            r = jmap_openmbox(req, dstmboxname, &dstmbox, 1);
-            if (r == IMAP_MAILBOX_NONEXISTENT) {
-                jmap_parser_invalid(&parser, "calendarIds");
-                r = 0;
-                goto done;
-            } else if (r) {
-                syslog(LOG_ERR, "jmap_openmbox(req, %s) failed: %s",
-                        dstmboxname, error_message(r));
-                goto done;
-            }
-        }
-    }
-
     /* Manage attachments */
     int ret = caldav_manage_attachments(req->accountid, ical, oldical);
     if (ret && ret != HTTP_NOT_FOUND) {
@@ -7186,7 +7162,7 @@ static int jmap_calendarevent_parse(jmap_req_t *req)
 
         ical = icalparser_parse_string(buf_cstring(&ctx.blob));
         if (ical) {
-            events = jmapical_tojmap_all(ical, props);
+            events = jmapical_tojmap_all(ical, props, NULL);
             icalcomponent_free(ical);
         }
 
