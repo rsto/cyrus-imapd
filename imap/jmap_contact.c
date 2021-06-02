@@ -4054,14 +4054,48 @@ static int _contact_set_create(jmap_req_t *req, unsigned kind,
     ptrarray_t blobs = PTRARRAY_INITIALIZER;
     property_blob_t *blob;
 
-    if ((uid = (char *) json_string_value(json_object_get(jcard, "uid")))) {
-        /* Use custom vCard UID from request object */
-        uid = xstrdup(uid);
-    }  else {
-        /* Create a vCard UID */
-        uid = xstrdup(makeuuid());
-        json_object_set_new(item, "uid", json_string(uid));
+    /* Validate uid */
+    struct carddav_db *db = carddav_open_userid(req->accountid);
+    if (!db) {
+        xsyslog(LOG_ERR, "can not open carddav db", "accountid=<%s>",
+                req->accountid);
+        r = IMAP_INTERNAL;
     }
+    if (!r) {
+        if ((uid = (char *) json_string_value(json_object_get(jcard, "uid")))) {
+            /* Use custom vCard UID from request object */
+            uid = xstrdup(uid);
+            r = carddav_lookup_uid(db, uid, &cdata);
+            if (r == CYRUSDB_NOTFOUND) {
+                r = 0;
+            }
+            else if (!r) {
+                json_array_append_new(invalid, json_string("uid"));
+            }
+        }  else {
+            /* Create a vCard UID */
+            int i;
+            for (i = 0; i < 3; i++) {
+                free(uid);
+                uid = xstrdup(makeuuid());
+                r = carddav_lookup_uid(db, uid, &cdata);
+                if (r == CYRUSDB_NOTFOUND) {
+                    json_object_set_new(item, "uid", json_string(uid));
+                    r = 0;
+                    break;
+                }
+                else if (!r) {
+                    json_array_append_new(invalid, json_string("uid"));
+                }
+            }
+            if (i == 3) {
+                xsyslog(LOG_ERR, "can not create unique id", NULL);
+                r = IMAP_INTERNAL;
+            }
+        }
+    }
+    carddav_close(db);
+    if (r) goto done;
 
     /* Determine mailbox and resource name of card.
      * We attempt to reuse the UID as DAV resource name; but
