@@ -3369,8 +3369,7 @@ gotevent:
 
         if (want_blobId) {
             json_t *jblobid = json_null();
-            if (rock->mbentry->uniqueid &&
-                jmap_encode_rawdata_blobid('I', rock->mbentry->uniqueid,
+            if (uniqueid && jmap_encode_rawdata_blobid('I', uniqueid,
                     cdata->dav.imap_uid, req->userid, NULL, NULL, &blobid)) {
                 jblobid = json_string(buf_cstring(&blobid));
             }
@@ -3379,8 +3378,8 @@ gotevent:
         if (want_debugBlobId) {
             json_t *jblobid = json_null();
             if (httpd_userisadmin) {
-                if (rock->mbentry->uniqueid &&
-                    jmap_encode_rawdata_blobid('I', rock->mbentry->uniqueid,
+                if (uniqueid &&
+                    jmap_encode_rawdata_blobid('I', uniqueid,
                         cdata->dav.imap_uid, NULL, NULL, NULL, &blobid)) {
                     jblobid = json_string(buf_cstring(&blobid));
                 }
