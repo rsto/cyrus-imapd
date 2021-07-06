@@ -3945,6 +3945,7 @@ participant_to_ical(icalcomponent *comp,
     if (is_orga) set_icalxparam(orga, JMAPICAL_XPARAM_ID, partid, 1);
 
     /* FIXME invitedBy */
+    /* FIXME sentBy */
 
     /* name */
     json_t *jname = json_object_get(jpart, "name");
