@@ -1654,9 +1654,7 @@ static json_t *participant_from_ical(icalproperty *prop,
     icalparameter *param;
     struct buf buf = BUF_INITIALIZER;
     icalproperty_kind kind = icalproperty_isa(prop);
-
-    int is_orga = !strcasecmpsafe(icalproperty_get_organizer(orga),
-                                  icalproperty_get_attendee(prop));
+    char *caladdress = normalized_uri(icalproperty_get_value_as_string(prop));
 
     /* sendTo */
     json_t *sendTo = rsvpto_from_ical(prop);
@@ -1743,7 +1741,10 @@ static json_t *participant_from_ical(icalproperty *prop,
         }
     }
     if (!json_object_get(roles, "owner")) {
-        if (is_orga) {
+        int is_owner = prop == orga || (orga &&
+                !strcasecmpsafe(icalproperty_get_organizer(orga),
+                    icalproperty_get_attendee(prop)));
+        if (is_owner) {
             json_object_set_new(roles, "owner", json_true());
             if (kind == ICAL_ATTENDEE_PROPERTY) {
                 json_object_set_new(roles, "attendee", json_true());
@@ -1969,7 +1970,17 @@ static json_t *participant_from_ical(icalproperty *prop,
         json_object_set_new(p, "scheduleStatus", jschedstat);
     }
 
+    /* sentBy */
+    const char *sentby;
+    if ((sentby = get_icalxparam_value(prop, JMAPICAL_XPARAM_SENTBY))) {
+        if (strncasecmp(caladdress, "MAILTO:", 7) ||
+                strcasecmp(caladdress + 7, sentby)) {
+            json_object_set_new(p, "sentBy", json_string(sentby));
+        }
+    }
+
     buf_free(&buf);
+    free(caladdress);
     return p;
 }
 
@@ -3945,7 +3956,6 @@ participant_to_ical(icalcomponent *comp,
     if (is_orga) set_icalxparam(orga, JMAPICAL_XPARAM_ID, partid, 1);
 
     /* FIXME invitedBy */
-    /* FIXME sentBy */
 
     /* name */
     json_t *jname = json_object_get(jpart, "name");
@@ -3999,6 +4009,26 @@ participant_to_ical(icalcomponent *comp,
     }
     else if (JNOTNULL(sendTo)) {
         jmap_parser_invalid(parser, "sendTo");
+    }
+
+    /* sentBy */
+    json_t *sentBy = json_object_get(jpart, "sentBy");
+    if (json_is_string(sentBy)) {
+        struct address *addr = NULL;
+        parseaddr_list(json_string_value(sentBy), &addr);
+        if (addr && !addr->invalid && !addr->name && !addr->next) {
+            char *val = address_get_all(addr, 1);
+            if (strncasecmp(caladdress, "MAILTO:", 7) ||
+                    strcasecmp(val, caladdress+7)) {
+                set_icalxparam(prop, JMAPICAL_XPARAM_SENTBY, val, 1);
+            }
+            free(val);
+        }
+        else jmap_parser_invalid(parser, "sentBy");
+        parseaddr_free(addr);
+    }
+    else if (JNOTNULL(sentBy)) {
+        jmap_parser_invalid(parser, "sentBy");
     }
 
     /* email */

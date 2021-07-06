@@ -81,6 +81,7 @@ extern "C" {
 #define JMAPICAL_XPARAM_REL           "X-JMAP-REL"
 #define JMAPICAL_XPARAM_ROLE          "X-JMAP-ROLE"
 #define JMAPICAL_XPARAM_RSVP_URI      "X-JMAP-RSVP-URI"
+#define JMAPICAL_XPARAM_SENTBY        "X-JMAP-SENTBY"
 #define JMAPICAL_XPARAM_TZID          "X-JMAP-TZID"
 
 #define JMAPICAL_XPARAM_DTSTAMP       "X-DTSTAMP" /* used for iMIP ATTENDEE replies */
