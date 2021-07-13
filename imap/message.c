@@ -3624,30 +3624,21 @@ EXPORTED char *message_extract_convsubject(const struct index_record *record)
     return NULL;
 }
 
-/*
- * Update the conversations database for the given
- * mailbox, to account for the given message.
- * @body may be NULL, in which case we get everything
- * we need out of the cache item in @record.
- */
-EXPORTED int message_update_conversations(struct conversations_state *state,
-                                          struct mailbox *mailbox,
-                                          struct index_record *record,
-                                          conversation_t **convp)
+static int extract_convdata(struct conversations_state *state,
+                            message_t *msg,
+                            strarray_t *msgidlist,
+                            arrayu64_t *matchlist,
+                            char **msubjp)
 {
     char *hdrs[4];
     char *c_refs = NULL, *c_env = NULL, *c_me_msgid = NULL;
-    strarray_t msgidlist = STRARRAY_INITIALIZER;
-    arrayu64_t matchlist = ARRAYU64_INITIALIZER;
     arrayu64_t cids = ARRAYU64_INITIALIZER;
-    int mustkeep = 0;
     conversation_t *conv = NULL;
     char *msubj = NULL;
     char *msubj_oldstyle = NULL;
     int i;
     size_t j;
     int r = 0;
-    struct mailbox *local_mailbox = NULL;
 
     /*
      * Gather all the msgids mentioned in the message, starting with
@@ -3658,14 +3649,14 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
      * msgid in In-Reply-To:), so we weed those out before proceeding
      * to the database.
      */
-    if (cacheitem_base(record, CACHE_HEADERS)) {
+    if ((msg->have & M_RECORD) && cacheitem_base(&msg->record, CACHE_HEADERS)) {
         /* we have cache loaded, get what we need there */
         strarray_t want = STRARRAY_INITIALIZER;
         char *envtokens[NUMENVTOKENS];
 
         /* get References from cached headers */
-        c_refs = xstrndup(cacheitem_base(record, CACHE_HEADERS),
-                          cacheitem_size(record, CACHE_HEADERS));
+        c_refs = xstrndup(cacheitem_base(&msg->record, CACHE_HEADERS),
+                          cacheitem_size(&msg->record, CACHE_HEADERS));
         strarray_append(&want, "references");
         message_pruneheader(c_refs, &want, 0);
         hdrs[0] = c_refs;
@@ -3676,15 +3667,15 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
          * +1 -> skip the leading paren
          * -2 -> don't include the size of the outer parens
          */
-        c_env = xstrndup(cacheitem_base(record, CACHE_ENVELOPE) + 1,
-                         cacheitem_size(record, CACHE_ENVELOPE) - 2);
+        c_env = xstrndup(cacheitem_base(&msg->record, CACHE_ENVELOPE) + 1,
+                         cacheitem_size(&msg->record, CACHE_ENVELOPE) - 2);
         parse_cached_envelope(c_env, envtokens, NUMENVTOKENS);
         hdrs[1] = envtokens[ENV_INREPLYTO];
         hdrs[2] = envtokens[ENV_MSGID];
 
         /* get X-ME-Message-ID from cached headers */
-        c_me_msgid = xstrndup(cacheitem_base(record, CACHE_HEADERS),
-                              cacheitem_size(record, CACHE_HEADERS));
+        c_me_msgid = xstrndup(cacheitem_base(&msg->record, CACHE_HEADERS),
+                              cacheitem_size(&msg->record, CACHE_HEADERS));
         strarray_set(&want, 0, "x-me-message-id");
         message_pruneheader(c_me_msgid, &want, 0);
         hdrs[3] = c_me_msgid;
@@ -3692,7 +3683,7 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
         strarray_fini(&want);
 
         /* work around stupid message_guid API */
-        message_guid_isnull(&record->guid);
+        message_guid_isnull(&msg->record.guid);
     }
     else {
         /* nope, now we're screwed */
@@ -3704,14 +3695,15 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
 
     /* Note that a NULL subject, e.g. due to a missing Subject: header
      * field in the original message, is normalised to "" not NULL */
-    if (cacheitem_base(record, CACHE_HEADERS)) {
+    if ((msg->have & M_RECORD) && cacheitem_base(&msg->record, CACHE_HEADERS)) {
         struct buf msubject = BUF_INITIALIZER;
-        extract_convsubject(record, &msubject, conversation_normalise_subject);
+        extract_convsubject(&msg->record, &msubject, conversation_normalise_subject);
         msubj = xstrdup(buf_cstring(&msubject));
         buf_reset(&msubject);
-        extract_convsubject(record, &msubject, oldstyle_normalise_subject);
+        extract_convsubject(&msg->record, &msubject, oldstyle_normalise_subject);
         msubj_oldstyle = buf_release(&msubject);
     }
+    *msubjp = msubj;
 
     for (i = 0 ; i < 4 ; i++) {
         int hcount = 0;
@@ -3735,7 +3727,7 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
             msgid = lcase(msgid);
 
             /* already seen this one? */
-            if (strarray_find(&msgidlist, msgid, 0) >= 0) {
+            if (strarray_find(msgidlist, msgid, 0) >= 0) {
                 free(msgid);
                 continue;
             }
@@ -3746,7 +3738,7 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
                 continue;
             }
 
-            strarray_appendm(&msgidlist, msgid);
+            strarray_appendm(msgidlist, msgid);
 
             /* Lookup the conversations database to work out which
              * conversation ids that message belongs to. */
@@ -3764,7 +3756,7 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
                 if (!conv || i == 3 || !conv->subject ||
                         !strcmpsafe(conv->subject, msubj) ||
                         !strcmpsafe(conv->subject, msubj_oldstyle)) {
-                    arrayu64_add(&matchlist, cid);
+                    arrayu64_add(matchlist, cid);
                 }
             }
 
@@ -3772,6 +3764,44 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
             conv = NULL;
         }
     }
+
+out:
+    arrayu64_fini(&cids);
+    free(c_refs);
+    free(c_env);
+    free(c_me_msgid);
+    free(msubj_oldstyle);
+
+    return r;
+}
+
+/*
+ * Update the conversations database for the given
+ * mailbox, to account for the given message.
+ * @body may be NULL, in which case we get everything
+ * we need out of the cache item in @record.
+ */
+EXPORTED int message_update_conversations(struct conversations_state *state,
+                                          struct mailbox *mailbox,
+                                          struct index_record *record,
+                                          conversation_t **convp)
+{
+    strarray_t msgidlist = STRARRAY_INITIALIZER;
+    arrayu64_t matchlist = ARRAYU64_INITIALIZER;
+    int mustkeep = 0;
+    conversation_t *conv = NULL;
+    char *msubj = NULL;
+    int i;
+    int r = 0;
+    struct mailbox *local_mailbox = NULL;
+    message_t *msg = message_new_from_record(mailbox, record);
+
+    /* extract existing conversations for this message */
+    r = extract_convdata(state, msg, &msgidlist, &matchlist, &msubj);
+    if (r) goto out;
+
+    /* work around stupid message_guid API */
+    message_guid_isnull(&record->guid);
 
     /* calculate the CID if needed */
     if (!record->silentupdate) {
@@ -3875,14 +3905,10 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
         record->internal_flags |= FLAG_INTERNAL_SPLITCONVERSATION;
 
 out:
+    message_unref(&msg);
     strarray_fini(&msgidlist);
     arrayu64_fini(&matchlist);
-    arrayu64_fini(&cids);
-    free(c_refs);
-    free(c_env);
-    free(c_me_msgid);
     free(msubj);
-    free(msubj_oldstyle);
     if (local_mailbox)
         mailbox_close(&local_mailbox);
 
@@ -5491,4 +5517,16 @@ EXPORTED int message_get_body(message_t *m, struct buf *buf)
 EXPORTED int message_get_headers(message_t *m, struct buf *buf)
 {
     return message_get_field(m, "rawheaders", MESSAGE_RAW, buf);
+}
+
+EXPORTED int message_get_cidlist(message_t *msg,
+                                 struct conversations_state *cstate,
+                                 arrayu64_t *cidlist)
+{
+    strarray_t msgidlist = STRARRAY_INITIALIZER;
+    char *msubj = NULL;
+    int r = extract_convdata(cstate, msg, &msgidlist, cidlist, &msubj);
+    strarray_fini(&msgidlist);
+    free(msubj);
+    return r;
 }

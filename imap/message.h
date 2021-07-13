@@ -356,6 +356,9 @@ extern int message_foreach_section(message_t *m,
 extern int message_get_leaf_types(message_t *m, strarray_t *types);
 extern int message_get_types(message_t *m, strarray_t *types);
 
+extern int message_get_cidlist(message_t *msg,
+                               struct conversations_state *state,
+                               arrayu64_t *cidlist);
 
 /* less shitty interface */
 extern const struct index_record *msg_record(const message_t *m);
