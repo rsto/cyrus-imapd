@@ -1020,14 +1020,20 @@ HIDDEN void jmap_email_matchmime_free(matchmime_t **matchmimep)
     *matchmimep = NULL;
 }
 
+#include "assert.h" // FIXME
+
 HIDDEN int jmap_email_matchmime(matchmime_t *matchmime,
                                 json_t *jfilter,
+                                struct conversations_state *cstate,
                                 const char *accountid,
                                 time_t internaldate,
                                 json_t **err)
 {
     int r = 0;
     int matches = 0;
+
+    // FIXME
+    assert(cstate);
 
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
     strarray_t capabilities = STRARRAY_INITIALIZER;
