@@ -3636,9 +3636,16 @@ static int extract_convdata(struct conversations_state *state,
     conversation_t *conv = NULL;
     char *msubj = NULL;
     char *msubj_oldstyle = NULL;
+    strarray_t want = STRARRAY_INITIALIZER;
+    struct buf buf = BUF_INITIALIZER;
     int i;
     size_t j;
     int r = 0;
+
+    if (!(msg->have & (M_RECORD|M_MAP))) {
+        /* nope, now we're screwed */
+        return IMAP_INTERNAL;
+    }
 
     /*
      * Gather all the msgids mentioned in the message, starting with
@@ -3649,61 +3656,91 @@ static int extract_convdata(struct conversations_state *state,
      * msgid in In-Reply-To:), so we weed those out before proceeding
      * to the database.
      */
-    if ((msg->have & M_RECORD) && cacheitem_base(&msg->record, CACHE_HEADERS)) {
-        /* we have cache loaded, get what we need there */
-        strarray_t want = STRARRAY_INITIALIZER;
-        char *envtokens[NUMENVTOKENS];
 
-        /* get References from cached headers */
+    /* get References */
+    if (cacheitem_base(&msg->record, CACHE_HEADERS)) {
         c_refs = xstrndup(cacheitem_base(&msg->record, CACHE_HEADERS),
-                          cacheitem_size(&msg->record, CACHE_HEADERS));
-        strarray_append(&want, "references");
-        message_pruneheader(c_refs, &want, 0);
-        hdrs[0] = c_refs;
+                cacheitem_size(&msg->record, CACHE_HEADERS));
+    }
+    else {
+        message_get_field(msg, "rawheaders", MESSAGE_RAW, &buf);
+        c_refs = buf_release(&buf);
+    }
+    strarray_append(&want, "references");
+    message_pruneheader(c_refs, &want, 0);
+    hdrs[0] = c_refs;
 
-        /* get In-Reply-To, Message-ID out of the envelope
-         *
-         * get a working copy; strip outer ()'s
+    /* get In-Reply-To, Message-ID */
+    if (cacheitem_base(&msg->record, CACHE_HEADERS)) {
+        /* get a working copy; strip outer ()'s
          * +1 -> skip the leading paren
          * -2 -> don't include the size of the outer parens
          */
+        char *envtokens[NUMENVTOKENS];
         c_env = xstrndup(cacheitem_base(&msg->record, CACHE_ENVELOPE) + 1,
-                         cacheitem_size(&msg->record, CACHE_ENVELOPE) - 2);
+                cacheitem_size(&msg->record, CACHE_ENVELOPE) - 2);
         parse_cached_envelope(c_env, envtokens, NUMENVTOKENS);
         hdrs[1] = envtokens[ENV_INREPLYTO];
         hdrs[2] = envtokens[ENV_MSGID];
-
-        /* get X-ME-Message-ID from cached headers */
-        c_me_msgid = xstrndup(cacheitem_base(&msg->record, CACHE_HEADERS),
-                              cacheitem_size(&msg->record, CACHE_HEADERS));
-        strarray_set(&want, 0, "x-me-message-id");
-        message_pruneheader(c_me_msgid, &want, 0);
-        hdrs[3] = c_me_msgid;
-
-        strarray_fini(&want);
-
-        /* work around stupid message_guid API */
-        message_guid_isnull(&msg->record.guid);
     }
     else {
-        /* nope, now we're screwed */
-        return IMAP_INTERNAL;
+        message_get_field(msg, "rawheaders", MESSAGE_RAW, &buf);
+        char *c_inreplyto = buf_release(&buf);
+        strarray_set(&want, 0, "in-reply-to");
+        message_pruneheader(c_inreplyto, &want, 0);
+        hdrs[1] = c_inreplyto;
+
+        message_get_field(msg, "rawheaders", MESSAGE_RAW, &buf);
+        char *c_msgid = buf_release(&buf);
+        strarray_set(&want, 0, "message-id");
+        message_pruneheader(c_msgid, &want, 0);
+        hdrs[2] = c_msgid;
     }
 
-    if (!is_valid_rfc2822_inreplyto(hdrs[1]))
-        hdrs[1] = NULL;
+    /* get X-ME-Message-ID */
+    if (cacheitem_base(&msg->record, CACHE_HEADERS)) {
+        c_me_msgid = xstrndup(cacheitem_base(&msg->record, CACHE_HEADERS),
+                cacheitem_size(&msg->record, CACHE_HEADERS));
+    }
+    else {
+        message_get_field(msg, "rawheaders", MESSAGE_RAW, &buf);
+        c_me_msgid = buf_release(&buf);
+    }
+    strarray_set(&want, 0, "x-me-message-id");
+    message_pruneheader(c_me_msgid, &want, 0);
+    hdrs[3] = c_me_msgid;
 
     /* Note that a NULL subject, e.g. due to a missing Subject: header
      * field in the original message, is normalised to "" not NULL */
     if ((msg->have & M_RECORD) && cacheitem_base(&msg->record, CACHE_HEADERS)) {
-        struct buf msubject = BUF_INITIALIZER;
-        extract_convsubject(&msg->record, &msubject, conversation_normalise_subject);
-        msubj = xstrdup(buf_cstring(&msubject));
-        buf_reset(&msubject);
-        extract_convsubject(&msg->record, &msubject, oldstyle_normalise_subject);
-        msubj_oldstyle = buf_release(&msubject);
+        extract_convsubject(&msg->record, &buf, conversation_normalise_subject);
+        msubj = buf_release(&buf);
+        extract_convsubject(&msg->record, &buf, oldstyle_normalise_subject);
+        msubj_oldstyle = buf_release(&buf);
+    }
+    else {
+        message_get_field(msg, "rawheaders", MESSAGE_RAW, &buf);
+        char *c_subj = buf_release(&buf);
+        strarray_set(&want, 0, "subject");
+        message_pruneheader(c_subj, &want, 0);
+
+        buf_setcstr(&buf, c_subj);
+        conversation_normalise_subject(&buf);
+        msubj = buf_release(&buf);
+
+        buf_setcstr(&buf, c_subj);
+        oldstyle_normalise_subject(&buf);
+        msubj_oldstyle = buf_release(&buf);
+
+        free(c_subj);
     }
     *msubjp = msubj;
+
+    /* work around stupid message_guid API */
+    message_guid_isnull(&msg->record.guid);
+
+    if (!is_valid_rfc2822_inreplyto(hdrs[1]))
+        hdrs[1] = NULL;
 
     for (i = 0 ; i < 4 ; i++) {
         int hcount = 0;
@@ -3766,6 +3803,8 @@ static int extract_convdata(struct conversations_state *state,
     }
 
 out:
+    strarray_fini(&want);
+    buf_free(&buf);
     arrayu64_fini(&cids);
     free(c_refs);
     free(c_env);
