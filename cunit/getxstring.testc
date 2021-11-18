@@ -102,16 +102,16 @@ static int tear_down(void)
     do {                                                            \
         int outputlen = sizeof(output)-1;                           \
         _TESTCASE_PRE(fut, input, retval, consumed);                \
-        CU_ASSERT_EQUAL(b.len, outputlen);                          \
-        CU_ASSERT(!memcmp(b.s, output, outputlen));                 \
+        CU_ASSERT_EQUAL(buf_len(&b), outputlen);                          \
+        CU_ASSERT(!memcmp(buf_s(&b), output, outputlen));                 \
         _TESTCASE_POST();                                           \
     } while(0)
 
 #define TESTCASE_NULL(fut, input, retval, consumed)                 \
     do {                                                            \
         _TESTCASE_PRE(fut, input, retval, consumed);                \
-        CU_ASSERT_EQUAL(b.len, 0);                                  \
-        CU_ASSERT_PTR_NULL(b.s);                                    \
+        CU_ASSERT_EQUAL(buf_len(&b), 0);                                  \
+        CU_ASSERT_PTR_NULL(buf_s(&b));                                    \
         _TESTCASE_POST();                                           \
     } while(0)
 

@@ -1592,7 +1592,7 @@ static int getmetadata(void *sc, const char *extname,
         r = IMAP_MAILBOX_NONEXISTENT;
     }
 
-    *res = (r || !attrib.len) ? NULL : buf_release(&attrib);
+    *res = (r || !buf_len(&attrib)) ? NULL : buf_release(&attrib);
     free(intname);
     buf_free(&attrib);
 

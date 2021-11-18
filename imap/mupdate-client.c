@@ -609,30 +609,30 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             break;
         }
 
-        if (Uislower(handle->cmd.s[0])) {
-            handle->cmd.s[0] = toupper((unsigned char) handle->cmd.s[0]);
+        if (Uislower(buf_s(&handle->cmd)[0])) {
+            buf_s(&handle->cmd)[0] = toupper((unsigned char) buf_s(&handle->cmd)[0]);
         }
-        for (p = &(handle->cmd.s[1]); *p; p++) {
+        for (p = &(buf_s(&handle->cmd)[1]); *p; p++) {
             if (Uislower(*p))
                 *p = toupper((unsigned char) *p);
         }
 
-        switch(handle->cmd.s[0]) {
+        switch(buf_s(&handle->cmd)[0]) {
         case 'B':
-            if (!strncmp(handle->cmd.s, "BAD", 3)) {
+            if (!strncmp(buf_s(&handle->cmd), "BAD", 3)) {
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 CHECKNEWLINE(handle, ch);
 
-                syslog(LOG_ERR, "mupdate BAD response: %s", handle->arg1.s);
+                syslog(LOG_ERR, "mupdate BAD response: %s", buf_s(&handle->arg1));
                 if (wait_for_ok && response) {
                     *response = MUPDATE_BAD;
                 }
                 goto done;
-            } else if (!strncmp(handle->cmd.s, "BYE", 3)) {
+            } else if (!strncmp(buf_s(&handle->cmd), "BYE", 3)) {
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 CHECKNEWLINE(handle, ch);
 
-                syslog(LOG_ERR, "mupdate BYE response: %s", handle->arg1.s);
+                syslog(LOG_ERR, "mupdate BYE response: %s", buf_s(&handle->arg1));
                 if (wait_for_ok && response) {
                     *response = MUPDATE_BYE;
                 }
@@ -641,15 +641,15 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             goto badcmd;
 
         case 'D':
-            if (!strncmp(handle->cmd.s, "DELETE", 6)) {
+            if (!strncmp(buf_s(&handle->cmd), "DELETE", 6)) {
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 CHECKNEWLINE(handle, ch);
 
                 memset(&box, 0, sizeof(box));
-                box.mailbox = handle->arg1.s;
+                box.mailbox = buf_s(&handle->arg1);
 
                 /* Handle delete command */
-                r = callback(&box, handle->cmd.s, context);
+                r = callback(&box, buf_s(&handle->cmd), context);
                 if (r) {
                     syslog(LOG_ERR,
                            "error deleting mailbox: callback returned %d", r);
@@ -660,7 +660,7 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             goto badcmd;
 
         case 'M':
-            if (!strncmp(handle->cmd.s, "MAILBOX", 7)) {
+            if (!strncmp(buf_s(&handle->cmd), "MAILBOX", 7)) {
                 /* Mailbox Name */
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 if (ch != ' ') {
@@ -681,10 +681,10 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
 
                 /* Handle mailbox command */
                 memset(&box, 0, sizeof(box));
-                box.mailbox = handle->arg1.s;
-                box.location = handle->arg2.s;
-                box.acl = handle->arg3.s;
-                r = callback(&box, handle->cmd.s, context);
+                box.mailbox = buf_s(&handle->arg1);
+                box.location = buf_s(&handle->arg2);
+                box.acl = buf_s(&handle->arg3);
+                r = callback(&box, buf_s(&handle->cmd), context);
                 if (r) { /* callback error ? */
                     syslog(LOG_ERR,
                            "error activating mailbox: callback returned %d", r);
@@ -694,11 +694,11 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             }
             goto badcmd;
         case 'N':
-            if (!strncmp(handle->cmd.s, "NO", 2)) {
+            if (!strncmp(buf_s(&handle->cmd), "NO", 2)) {
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 CHECKNEWLINE(handle, ch);
 
-                syslog(LOG_DEBUG, "mupdate NO response: %s", handle->arg1.s);
+                syslog(LOG_DEBUG, "mupdate NO response: %s", buf_s(&handle->arg1));
                 if (wait_for_ok) {
                     if (response) *response = MUPDATE_NO;
                     goto done;
@@ -707,7 +707,7 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             }
             goto badcmd;
         case 'O':
-            if (!strncmp(handle->cmd.s, "OK", 2)) {
+            if (!strncmp(buf_s(&handle->cmd), "OK", 2)) {
                 /* It's all good, grab the attached string and move on */
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
 
@@ -720,7 +720,7 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
             }
             goto badcmd;
         case 'R':
-            if (!strncmp(handle->cmd.s, "RESERVE", 7)) {
+            if (!strncmp(buf_s(&handle->cmd), "RESERVE", 7)) {
                 /* Mailbox Name */
                 ch = getstring(handle->conn->in, handle->conn->out, &(handle->arg1));
                 if (ch != ' ') {
@@ -734,9 +734,9 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
 
                 /* Handle reserve command */
                 memset(&box, 0, sizeof(box));
-                box.mailbox = handle->arg1.s;
-                box.location = handle->arg2.s;
-                r = callback(&box, handle->cmd.s, context);
+                box.mailbox = buf_s(&handle->arg1);
+                box.location = buf_s(&handle->arg2);
+                r = callback(&box, buf_s(&handle->cmd), context);
                 if (r) { /* callback error ? */
                     syslog(LOG_ERR,
                            "error reserving mailbox: callback returned %d", r);
@@ -751,7 +751,7 @@ EXPORTED int mupdate_scarf(mupdate_handle *handle,
         badcmd:
             /* Bad Command */
             syslog(LOG_ERR, "bad/unexpected command from master: %s",
-                   handle->cmd.s);
+                   buf_s(&handle->cmd));
             r = MUPDATE_PROTOCOL_ERROR;
             goto done;
         }

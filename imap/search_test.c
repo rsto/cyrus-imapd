@@ -123,7 +123,7 @@ static int do_search(const char *mboxname,
         goto out;
     }
 
-    pin = prot_readmap(querytext.s, querytext.len);
+    pin = prot_readmap(buf_s(&querytext), buf_len(&querytext));
     pout = prot_new(/*fd*/0, /*write*/1);
 
     init.userid = userid;
@@ -206,7 +206,7 @@ static int do_serialise(char **words, int nwords)
         goto out;
     }
 
-    pin = prot_readmap(querytext.s, querytext.len);
+    pin = prot_readmap(buf_s(&querytext), buf_len(&querytext));
     pout = prot_new(/*fd*/0, /*write*/1);
 
     searchargs = new_searchargs(".", GETSEARCH_CHARSET_KEYWORD, &ns, userid, auth_newstate(userid), /*isadmin*/0);

@@ -892,7 +892,7 @@ static int read_indexed(const char *userid,
         buf_printf(&key, "%s.%u", mbentry->name, mbentry->uidvalidity);
     }
 
-    r = cyrusdb_fetch(idb->db, key.s, key.len, &data, &datalen, NULL);
+    r = cyrusdb_fetch(idb->db, buf_s(&key), buf_len(&key), &data, &datalen, NULL);
     if (r && r != CYRUSDB_NOTFOUND) {
         goto out;
     }
@@ -926,7 +926,7 @@ static int read_indexed(const char *userid,
             buf_printf(&key, "#c.%s#%s.%u", strarray_nth(activetiers, i),
                     mbentry->name, mbentry->uidvalidity);
         }
-        r = cyrusdb_fetch(idb->db, key.s, key.len, &data, &datalen, NULL);
+        r = cyrusdb_fetch(idb->db, buf_s(&key), buf_len(&key), &data, &datalen, NULL);
 
         /* Fall back to the lower tiers if we haven't merged all tiers. */
         if (r == CYRUSDB_NOTFOUND && !do_cache) {
@@ -964,7 +964,7 @@ static int read_indexed(const char *userid,
                 }
                 buf_printf(&key, "%s.%u", mbentry->name, mbentry->uidvalidity);
             }
-            r = cyrusdb_fetch(srcdb->db, key.s, key.len, &data, &datalen, NULL);
+            r = cyrusdb_fetch(srcdb->db, buf_s(&key), buf_len(&key), &data, &datalen, NULL);
         }
         if (r && r != CYRUSDB_NOTFOUND) {
             goto out;
@@ -1037,7 +1037,7 @@ static int store_indexed(struct indexeddb *idb,
     if (!str) return 0;
 
     buf_printf(&data, "%u %s", INDEXEDDB_VAL_VERSION, str);
-    r = cyrusdb_store(idb->db, key, keylen, data.s, data.len, &idb->txn);
+    r = cyrusdb_store(idb->db, key, keylen, buf_s(&data), buf_len(&data), &idb->txn);
     buf_free(&data);
     free(str);
 
@@ -1082,7 +1082,7 @@ static int write_indexed(const char *dir,
         buf_printf(&key, "%s.%u", mboxname, uidvalidity);
     }
 
-    r = store_indexed(idb, key.s, key.len, seq);
+    r = store_indexed(idb, buf_s(&key), buf_len(&key), seq);
 
 out:
     if (idb) {
@@ -2418,7 +2418,7 @@ static int append_text(search_text_receiver_t *rx,
     struct segment *seg;
 
     if (tr->part) {
-        unsigned len = text->len;
+        unsigned len = buf_len(text);
         if (tr->part_total + len > config_search_maxsize) {
             syslog(LOG_ERR, "Xapian: truncating text from "
                     "message mailbox %s uid %u part %s",
@@ -2445,7 +2445,7 @@ static int append_text(search_text_receiver_t *rx,
                 }
                 ptrarray_append(&tr->segs, seg);
             }
-            buf_appendmap(&seg->text, text->s, len);
+            buf_appendmap(&seg->text, buf_s(text), len);
         }
     }
 
@@ -2468,7 +2468,7 @@ static void end_part(search_text_receiver_t *rx,
 
     if (tr->verbose > 1)
         syslog(LOG_NOTICE, "Xapian: %llu bytes in part %s",
-               (seg ? (unsigned long long)seg->text.len : 0),
+               (seg ? (unsigned long long)buf_len(&seg->text) : 0),
                search_part_as_string(tr->part));
 
     tr->part = 0;
@@ -3071,9 +3071,9 @@ static int flush_snippets(search_text_receiver_t *rx)
                  * for each search part of the same message. This is due to
                  * the way the snippet callbacks are implemented. */
                 r = xapian_snipgen_end_doc(tr->snipgen, &snippets);
-                if (!r && snippets.len) {
+                if (!r && buf_len(&snippets)) {
                     r = tr->proc(tr->super.mailbox, tr->super.uid, last_part,
-                                 last_partid, snippets.s, tr->rock);
+                                 last_partid, buf_s(&snippets), tr->rock);
                 }
                 if (r) goto out;
             }
@@ -3101,9 +3101,9 @@ static int flush_snippets(search_text_receiver_t *rx)
 
     if (last_part != -1) {
         r = xapian_snipgen_end_doc(tr->snipgen, &snippets);
-        if (!r && snippets.len)
+        if (!r && buf_len(&snippets))
             r = tr->proc(tr->super.mailbox, tr->super.uid, last_part,
-                    last_partid, snippets.s, tr->rock);
+                    last_partid, buf_s(&snippets), tr->rock);
     }
 
     free_segments(&tr->super);

@@ -439,7 +439,7 @@ HIDDEN unsigned mailbox_cached_header_inline(const char *text)
 
 static const char *cache_base(const struct index_record *record)
 {
-    const char *base = record->crec.buf->s;
+    const char *base = buf_s(record->crec.buf);
     return base + record->crec.offset;
 }
 
@@ -461,7 +461,7 @@ static struct buf *cache_buf(const struct index_record *record)
 
 EXPORTED const char *cacheitem_base(const struct index_record *record, int field)
 {
-    const char *base = record->crec.buf->s;
+    const char *base = buf_s(record->crec.buf);
     return base + record->crec.item[field].offset;
 }
 
@@ -496,7 +496,7 @@ static int cache_parserecord(struct mappedfile *cachefile, uint64_t cache_offset
     offset = cache_offset;
 
     for (cache_ent = 0; cache_ent < NUM_CACHE_FIELDS; cache_ent++) {
-        cacheitem = buf->s + offset;
+        cacheitem = buf_s(buf) + offset;
 
         /* bounds checking */
         if (offset >= buf_size) {
@@ -530,7 +530,7 @@ static int cache_parserecord(struct mappedfile *cachefile, uint64_t cache_offset
             return IMAP_IOERROR;
         }
 
-        offset = next - buf->s;
+        offset = next - buf_s(buf);
     }
 
     /* all fit within the cache, it's gold as far as we can tell */
@@ -588,7 +588,7 @@ static int cache_append_record(struct mappedfile *mf, struct index_record *recor
 
     n = mappedfile_pwritebuf(mf, buf, offset);
     if (n < 0) {
-        syslog(LOG_ERR, "failed to append " SIZE_T_FMT " bytes to cache", buf->len);
+        syslog(LOG_ERR, "failed to append " SIZE_T_FMT " bytes to cache", buf_len(buf));
         return IMAP_IOERROR;
     }
 
@@ -2315,7 +2315,7 @@ EXPORTED int mailbox_read_basecid(struct mailbox *mailbox, const struct index_re
     if (record->internal_flags & FLAG_INTERNAL_SPLITCONVERSATION) {
         struct buf annotval = BUF_INITIALIZER;
         mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "basethrid", "", &annotval);
-        if (annotval.len == 16) {
+        if (buf_len(&annotval) == 16) {
             const char *p = buf_cstring(&annotval);
             /* we have a new canonical CID */
             struct index_record *backdoor = (struct index_record *)record;
@@ -3297,9 +3297,9 @@ EXPORTED void mailbox_annot_changed(struct mailbox *mailbox,
         if (r || record.internal_flags & FLAG_INTERNAL_EXPUNGED)
             return;
         if (!mailbox_is_virtannot(mailbox, entry)) {
-            if (oldval->len)
+            if (buf_len(oldval))
                 mailbox->i.synccrcs.annot ^= crc_annot(uid, entry, userid, oldval);
-            if (newval->len)
+            if (buf_len(newval))
                 mailbox->i.synccrcs.annot ^= crc_annot(uid, entry, userid, newval);
         }
     }
@@ -3314,12 +3314,12 @@ EXPORTED void mailbox_annot_changed(struct mailbox *mailbox,
     mailbox_quota_dirty(mailbox);
 
     /* corruption prevention - check we don't go negative */
-    if (mailbox->i.quota_annot_used > (quota_t)oldval->len)
-        mailbox->i.quota_annot_used -= oldval->len;
+    if (mailbox->i.quota_annot_used > (quota_t)buf_len(oldval))
+        mailbox->i.quota_annot_used -= buf_len(oldval);
     else
         mailbox->i.quota_annot_used = 0;
 
-    mailbox->i.quota_annot_used += newval->len;
+    mailbox->i.quota_annot_used += buf_len(newval);
 }
 
 static int calc_one_annot(const char *mboxname __attribute__((unused)),
@@ -3337,7 +3337,7 @@ static int calc_one_annot(const char *mboxname __attribute__((unused)),
         cr->annot ^= crc_annot(uid, entry, userid, value);
 
     /* always count the size */
-    cr->used += value->len;
+    cr->used += buf_len(value);
 
     return 0;
 }
@@ -4865,7 +4865,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
             /* extract CID */
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "thrid", "", &buf);
-            if (buf.len == 16) {
+            if (buf_len(&buf) == 16) {
                 const char *p = buf_cstring(&buf);
                 parsehex(p, &p, 16, &copyrecord.cid);
             }
@@ -4886,7 +4886,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
             /* extract CID */
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "savedate", "", &buf);
-            if (buf.len) {
+            if (buf_len(&buf)) {
                 const char *p = buf_cstring(&buf);
                 bit64 newval;
                 parsenum(p, &p, 0, &newval);
@@ -4909,7 +4909,7 @@ static int mailbox_index_repack(struct mailbox *mailbox, int version)
             /* extract CID */
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record->uid, IMAP_ANNOT_NS "createdmodseq", "", &buf);
-            if (buf.len) {
+            if (buf_len(&buf)) {
                 const char *p = buf_cstring(&buf);
                 bit64 newval;
                 parsenum(p, &p, 0, &newval);
@@ -7461,8 +7461,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags, struct mailbox **m
         if (mailbox->i.minor_version >= 13) {
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "thrid", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "thrid", NULL, &buf);
-            if (buf.len) {
+            if (!buf_len(&buf)) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "thrid", NULL, &buf);
+            if (buf_len(&buf)) {
                 syslog(LOG_NOTICE, "removing stale thrid for %u", record.uid);
                 printf("removing stale thrid for %u\n", record.uid);
                 buf_reset(&buf);
@@ -7474,8 +7474,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags, struct mailbox **m
         if (mailbox->i.minor_version >= 15) {
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "savedate", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "savedate", NULL, &buf);
-            if (buf.len) {
+            if (!buf_len(&buf)) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "savedate", NULL, &buf);
+            if (buf_len(&buf)) {
                 syslog(LOG_NOTICE, "removing stale savedate for %u", record.uid);
                 printf("removing stale savedate for %u\n", record.uid);
                 buf_reset(&buf);
@@ -7487,8 +7487,8 @@ EXPORTED int mailbox_reconstruct(const char *name, int flags, struct mailbox **m
         if (mailbox->i.minor_version >= 16) {
             buf_reset(&buf);
             mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "createdmodseq", "", &buf);
-            if (!buf.len) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "createdmodseq", NULL, &buf);
-            if (buf.len) {
+            if (!buf_len(&buf)) mailbox_annotation_lookup(mailbox, record.uid, IMAP_ANNOT_NS "createdmodseq", NULL, &buf);
+            if (buf_len(&buf)) {
                 syslog(LOG_NOTICE, "removing stale createdmodseq for %u", record.uid);
                 printf("removing stale createdmodseq for %u\n", record.uid);
                 buf_reset(&buf);
@@ -7724,7 +7724,9 @@ EXPORTED int mailbox_annotation_write(struct mailbox *mailbox, uint32_t uid,
     struct buf oldvalue = BUF_INITIALIZER;
 
     annotatemore_msg_lookup(mailbox, uid, entry, userid, &oldvalue);
-    if (oldvalue.len == value->len && (!value->len || !memcmp(oldvalue.s, value->s, value->len)))
+    if (buf_len(&oldvalue) == buf_len(value) &&
+            (!buf_len(value) ||
+             !memcmp(buf_s(&oldvalue), buf_s(value), buf_len(value))))
         goto done;
 
     struct index_record record;
@@ -7759,7 +7761,9 @@ EXPORTED int mailbox_annotation_writemask(struct mailbox *mailbox, uint32_t uid,
      * user's own value rather than the masked value, regardless of whether they
      * have the same content */
     annotatemore_msg_lookup(mailbox, uid, entry, userid, &oldvalue);
-    if (oldvalue.len == value->len && (!value->len || !memcmp(oldvalue.s, value->s, value->len)))
+    if (buf_len(&oldvalue) == buf_len(value) &&
+            (!buf_len(value) ||
+             !memcmp(buf_s(&oldvalue), buf_s(value), buf_len(value))))
         goto done;
 
     struct index_record record;

@@ -939,7 +939,7 @@ static int relocate(struct dbengine *db)
     loc->forwardloc[level] = 0;
 
     /* special case start pointer for efficiency */
-    if (!loc->keybuf.len) {
+    if (!buf_len(&loc->keybuf)) {
         for (i = 0; i < loc->record.level; i++) {
             loc->backloc[i] = loc->record.offset;
             loc->forwardloc[i] = _getloc(db, &loc->record, i);
@@ -962,7 +962,7 @@ static int relocate(struct dbengine *db)
                 assert(newrecord.level >= level);
 
                 cmp = db->compar(KEY(db, &newrecord), newrecord.keylen,
-                                 loc->keybuf.s, loc->keybuf.len);
+                                 buf_s(&loc->keybuf), buf_len(&loc->keybuf));
 
                 /* not there?  stay at this level */
                 if (cmp < 0) {
@@ -1000,16 +1000,16 @@ static int find_loc(struct dbengine *db, const char *key, size_t keylen)
     struct skiploc *loc = &db->loc;
     int cmp, i, r;
 
-    if (key != loc->keybuf.s)
+    if (key != buf_s(&loc->keybuf))
         buf_setmap(&loc->keybuf, key, keylen);
-    else if (keylen != loc->keybuf.len)
+    else if (keylen != buf_len(&loc->keybuf))
         buf_truncate(&loc->keybuf, keylen);
 
     /* can we special case advance? */
     if (keylen && loc->end == db->end
                && loc->generation == db->header.generation) {
         cmp = db->compar(KEY(db, &loc->record), loc->record.keylen,
-                         loc->keybuf.s, loc->keybuf.len);
+                         buf_s(&loc->keybuf), buf_len(&loc->keybuf));
         /* same place, and was exact.  Otherwise we're going back,
          * and the reverse pointers are no longer valid... */
         if (db->loc.is_exactmatch && cmp == 0) {
@@ -1033,7 +1033,7 @@ static int find_loc(struct dbengine *db, const char *key, size_t keylen)
 
             /* now where is THIS record? */
             cmp = db->compar(KEY(db, &newrecord), newrecord.keylen,
-                             loc->keybuf.s, loc->keybuf.len);
+                             buf_s(&loc->keybuf), buf_len(&loc->keybuf));
 
             /* exact match? */
             if (cmp == 0) {
@@ -1161,7 +1161,7 @@ static int store_here(struct dbengine *db, const char *val, size_t vallen)
     memset(&newrecord, 0, sizeof(struct skiprecord));
     newrecord.type = RECORD;
     newrecord.level = randlvl(1, MAXLEVEL);
-    newrecord.keylen = loc->keybuf.len;
+    newrecord.keylen = buf_len(&loc->keybuf);
     newrecord.vallen = vallen;
     for (i = 0; i < newrecord.level; i++)
         newrecord.nextloc[i+1] = loc->forwardloc[i];
@@ -1169,7 +1169,7 @@ static int store_here(struct dbengine *db, const char *val, size_t vallen)
         level = newrecord.level;
 
     /* append to the file */
-    r = append_record(db, &newrecord, loc->keybuf.s, val);
+    r = append_record(db, &newrecord, buf_s(&loc->keybuf), val);
     if (r) return r;
 
     /* get the nextlevel to point here for all this record's levels */
@@ -1552,8 +1552,8 @@ static int myfetch(struct dbengine *db,
         if (r) goto done;
     }
 
-    if (foundkey) *foundkey = db->loc.keybuf.s;
-    if (foundkeylen) *foundkeylen = db->loc.keybuf.len;
+    if (foundkey) *foundkey = buf_s(&db->loc.keybuf);
+    if (foundkeylen) *foundkeylen = buf_len(&db->loc.keybuf);
 
     if (db->loc.is_exactmatch) {
         if (data) *data = VAL(db, &db->loc.record);
@@ -1634,7 +1634,7 @@ static int myforeach(struct dbengine *db,
         val = VAL(db, &db->loc.record);
         vallen = db->loc.record.vallen;
 
-        if (!goodp || goodp(rock, db->loc.keybuf.s, db->loc.keybuf.len,
+        if (!goodp || goodp(rock, buf_s(&db->loc.keybuf), buf_len(&db->loc.keybuf),
                                   val, vallen)) {
             /* take a copy of they key - just in case cb does actions on this database
              * and clobbers loc */
@@ -1648,7 +1648,7 @@ static int myforeach(struct dbengine *db,
             }
 
             /* make callback */
-            cb_r = cb(rock, db->loc.keybuf.s, db->loc.keybuf.len,
+            cb_r = cb(rock, buf_s(&db->loc.keybuf), buf_len(&db->loc.keybuf),
                             val, vallen);
             if (cb_r) break;
 
@@ -1662,7 +1662,7 @@ static int myforeach(struct dbengine *db,
             }
 
             /* should be cheap if we're already here */
-            r = find_loc(db, keybuf.s, keybuf.len);
+            r = find_loc(db, buf_s(&keybuf), buf_len(&keybuf));
             if (r) goto done;
         }
         else if (!tidptr) {
@@ -1683,7 +1683,7 @@ static int myforeach(struct dbengine *db,
                 need_unlock = 1;
 
                 /* should be cheap if we're already here */
-                r = find_loc(db, keybuf.s, keybuf.len);
+                r = find_loc(db, buf_s(&keybuf), buf_len(&keybuf));
                 if (r) goto done;
 
                 num_misses = 0;

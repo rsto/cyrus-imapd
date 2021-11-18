@@ -369,7 +369,7 @@ EXPORTED ssize_t mappedfile_pwritebuf(struct mappedfile *mf,
                                       const struct buf *buf,
                                       off_t offset)
 {
-    return mappedfile_pwrite(mf, buf->s, buf->len, offset);
+    return mappedfile_pwrite(mf, buf_s(buf), buf_len(buf), offset);
 }
 
 EXPORTED ssize_t mappedfile_pwritev(struct mappedfile *mf,

@@ -86,7 +86,7 @@ static int parse_record(struct buf *buf,
     buf_cstring(buf); /* use a working copy */
 
     /* check version */
-    if (((version = strtoul(buf->s, &wild, 10)) < 1) ||
+    if (((version = strtoul(buf_s(buf), &wild, 10)) < 1) ||
         (version > USERDENY_VERSION))
         return IMAP_MAILBOX_BADFORMAT;
 
@@ -227,7 +227,7 @@ EXPORTED int denydb_set(const char *user, const char *service, const char *msg)
     do {
         r = cyrusdb_store(denydb,
                           user, strlen(user),
-                          data.s, data.len,
+                          buf_s(&data), buf_len(&data),
                           &txn);
     } while (r == CYRUSDB_AGAIN);
 
@@ -308,12 +308,12 @@ static int denydb_foreach_cb(void *rock,
     r = parse_record(&buf, &wild, &msg);
     if (r) {
         syslog(LOG_WARNING,
-               "DENYDB_ERROR: invalid entry for '%s'", user.s);
+               "DENYDB_ERROR: invalid entry for '%s'", buf_s(&user));
         r = 0;  /* whatever, keep going */
         goto out;
     }
 
-    r = dr->proc(user.s, wild, msg, dr->rock);
+    r = dr->proc(buf_s(&user), wild, msg, dr->rock);
 
 out:
     buf_free(&user);

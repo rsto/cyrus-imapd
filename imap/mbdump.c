@@ -363,7 +363,7 @@ static int dump_annotations(const char *mailbox __attribute__((unused)),
     free(ename);
 
     prot_printf(ctx->pout, " (%ld ", 0L);  /* was modifiedsince */
-    prot_printliteral(ctx->pout, value->s, value->len);
+    prot_printliteral(ctx->pout, buf_s(value), buf_len(value));
     prot_putc(' ', ctx->pout);
     prot_printliteral(ctx->pout, contenttype, strlen(contenttype));
     prot_putc(')', ctx->pout);
@@ -865,7 +865,7 @@ EXPORTED int undump_mailbox(const char *mbname,
     c = getword(pin, &data);
 
     /* we better be in a list now */
-    if (c != '(' || data.s[0]) {
+    if (c != '(' || buf_s(&data)[0]) {
         buf_free(&data);
         free(userid);
         eatline(pin, c);
@@ -874,10 +874,10 @@ EXPORTED int undump_mailbox(const char *mbname,
 
     /* We should now have a number or a NIL */
     c = getword(pin, &data);
-    if (!strcmp(data.s, "NIL")) {
+    if (!strcmp(buf_s(&data), "NIL")) {
         /* Remove any existing quotaroot */
         mboxlist_unsetquota(mbname);
-    } else if (sscanf(data.s, QUOTA_T_FMT, &quotalimit) == 1) {
+    } else if (sscanf(buf_s(&data), QUOTA_T_FMT, &quotalimit) == 1) {
         /* quota will actually be applied later */
         newquotas[QUOTA_STORAGE] = quotalimit;
     } else {
@@ -930,7 +930,7 @@ EXPORTED int undump_mailbox(const char *mbname,
             goto done;
         }
 
-        if(!strncmp(file.s, "A-", 2)) {
+        if(!strncmp(buf_s(&file), "A-", 2)) {
             /* Annotation */
             int i;
             char *tmpuserid;
@@ -945,19 +945,19 @@ EXPORTED int undump_mailbox(const char *mbname,
                 if (r) goto done;
             }
 
-            for(i=2; file.s[i]; i++) {
-                if(file.s[i] == '/') break;
+            for(i=2; buf_s(&file)[i]; i++) {
+                if(buf_s(&file)[i] == '/') break;
             }
-            if(!file.s[i]) {
+            if(!buf_s(&file)[i]) {
                 r = IMAP_PROTOCOL_ERROR;
                 goto done;
             }
             tmpuserid = xmalloc(i-2+1);
 
-            memcpy(tmpuserid, &(file.s[2]), i-2);
+            memcpy(tmpuserid, &(buf_s(&file)[2]), i-2);
             tmpuserid[i-2] = '\0';
 
-            annotation = xstrdup(&(file.s[i]));
+            annotation = xstrdup(&(buf_s(&file)[i]));
 
             if(prot_getc(pin) != '(') {
                 r = IMAP_PROTOCOL_ERROR;
@@ -1008,7 +1008,7 @@ EXPORTED int undump_mailbox(const char *mbname,
 
             continue;
         }
-        else if (!strcmp(file.s, "X-QUOTA")) {
+        else if (!strcmp(buf_s(&file), "X-QUOTA")) {
             /* Quota */
             if (prot_getc(pin) != '(') {
                 r = IMAP_PROTOCOL_ERROR;
@@ -1025,7 +1025,7 @@ EXPORTED int undump_mailbox(const char *mbname,
                     goto done;
                 }
                 /* ignore unknown resources */
-                res = quota_name_to_resource(content.s);
+                res = quota_name_to_resource(buf_s(&content));
 
                 c = getint32(pin, &limit);
                 if (res >= 0) {
@@ -1085,35 +1085,35 @@ EXPORTED int undump_mailbox(const char *mbname,
             prot_flush(pout);
         }
 
-        if (userid && !strcmp(file.s, "SUBS")) {
+        if (userid && !strcmp(buf_s(&file), "SUBS")) {
             /* overwriting this outright is absolutely what we want to do */
             char *s = user_hash_subs(userid);
             strlcpy(fnamebuf, s, sizeof(fnamebuf));
             free(s);
 #ifdef WITH_DAV
-        } else if (userid && !strcmp(file.s, "DAV")) {
+        } else if (userid && !strcmp(buf_s(&file), "DAV")) {
             /* overwriting this outright is absolutely what we want to do */
             struct buf dav_file = BUF_INITIALIZER;
             dav_getpath_byuserid(&dav_file, userid);
             strlcpy(fnamebuf, buf_cstring(&dav_file), sizeof(fnamebuf));
             buf_free(&dav_file);
 #endif
-        } else if (userid && !strcmp(file.s, "SEEN")) {
+        } else if (userid && !strcmp(buf_s(&file), "SEEN")) {
             seen_file = seen_getpath(userid);
 
             snprintf(fnamebuf,sizeof(fnamebuf),"%s.%d",seen_file,getpid());
-        } else if (userid && !strcmp(file.s, "MBOXKEY")) {
+        } else if (userid && !strcmp(buf_s(&file), "MBOXKEY")) {
             mboxkey_file = mboxkey_getpath(userid);
 
             snprintf(fnamebuf,sizeof(fnamebuf),"%s.%d",mboxkey_file,getpid());
-        } else if (userid && !strncmp(file.s, "SIEVE", 5)) {
-            int isdefault = !strncmp(file.s, "SIEVED", 6);
+        } else if (userid && !strncmp(buf_s(&file), "SIEVE", 5)) {
+            int isdefault = !strncmp(buf_s(&file), "SIEVED", 6);
             char *realname;
             int ret;
 
             /* skip prefixes */
-            if(isdefault) realname = file.s + 7;
-            else realname = file.s + 6;
+            if(isdefault) realname = buf_s(&file) + 7;
+            else realname = buf_s(&file) + 6;
 
             if(sieve_usehomedir) {
                 /* xxx! */
@@ -1152,13 +1152,13 @@ EXPORTED int undump_mailbox(const char *mbname,
             const char *path = NULL;
 
             /* see if its one of our datafiles */
-            for (df = data_files; df->fname && strcmp(df->fname, file.s); df++);
+            for (df = data_files; df->fname && strcmp(df->fname, buf_s(&file)); df++);
             if (df->metaname) {
                 path = mailbox_meta_fname(mailbox, df->metaname);
             } else {
                 uint32_t uid;
                 const char *ptr = NULL;
-                if (!parseuint32(file.s, &ptr, &uid)) {
+                if (!parseuint32(buf_s(&file), &ptr, &uid)) {
                     /* is it really a data file? */
                     if (ptr && ptr[0] == '.' && ptr[1] == '\0')
                         path = mailbox_datapath(mailbox, uid);

@@ -203,7 +203,7 @@ int getscript(struct protstream *conn, const struct buf *name)
         return TIMSIEVE_FAIL;
     }
 
-    snprintf(path, 1023, "%s.script", name->s);
+    snprintf(path, 1023, "%s.script", buf_s(name));
 
     buf = sievedir_get_script(sieve_dir, path);
 
@@ -248,7 +248,7 @@ int putscript(struct protstream *conn, const struct buf *name,
       /* see if this would put the user over quota */
       maxscripts = config_getint(IMAPOPT_SIEVE_MAXSCRIPTS);
 
-      if (sievedir_num_scripts(sieve_dir, name->s)+1 > maxscripts)
+      if (sievedir_num_scripts(sieve_dir, buf_s(name))+1 > maxscripts)
       {
           prot_printf(conn,
                       "NO (QUOTA/MAXSCRIPTS) \"You are only allowed %d scripts on this server\"\r\n",
@@ -313,15 +313,15 @@ int deletescript(struct protstream *conn, const struct buf *name)
       return TIMSIEVE_FAIL;
   }
 
-  if (sievedir_script_isactive(sieve_dir, name->s)) {
+  if (sievedir_script_isactive(sieve_dir, buf_s(name))) {
     prot_printf(conn, "NO (ACTIVE) \"Active script cannot be deleted\"\r\n");
     return TIMSIEVE_FAIL;
   }
 
-  result = sievedir_delete_script(sieve_dir, name->s);
+  result = sievedir_delete_script(sieve_dir, buf_s(name));
   if (result != SIEVEDIR_OK) {
       if (result == SIEVEDIR_NOTFOUND)
-          prot_printf(conn, "NO (NONEXISTENT) \"Script %s does not exist.\"\r\n", name->s);
+          prot_printf(conn, "NO (NONEXISTENT) \"Script %s does not exist.\"\r\n", buf_s(name));
       else
           prot_printf(conn,"NO \"Error deleting script\"\r\n");
       return TIMSIEVE_FAIL;
@@ -378,7 +378,7 @@ int setactive(struct protstream *conn, const struct buf *name)
     int result;
 
     /* if string name is empty, disable active script */
-    if (!name->len) {
+    if (!buf_len(name)) {
         if (deleteactive(conn) != TIMSIEVE_OK)
             return TIMSIEVE_FAIL;
 
@@ -392,13 +392,13 @@ int setactive(struct protstream *conn, const struct buf *name)
         return TIMSIEVE_FAIL;
     }
 
-    if (sievedir_script_exists(sieve_dir, name->s)==FALSE)
+    if (sievedir_script_exists(sieve_dir, buf_s(name))==FALSE)
     {
         prot_printf(conn,"NO (NONEXISTENT) \"Script does not exist\"\r\n");
         return TIMSIEVE_NOEXIST;
     }
 
-    result = sievedir_activate_script(sieve_dir, name->s);
+    result = sievedir_activate_script(sieve_dir, buf_s(name));
     if (result != SIEVEDIR_OK) {
         prot_printf(conn,"NO \"Error activating script\"\r\n");
         return TIMSIEVE_FAIL;
@@ -427,13 +427,13 @@ int renamescript(struct protstream *conn,
       return TIMSIEVE_FAIL;
   }
 
-  if (sievedir_script_exists(sieve_dir, newname->s)==TRUE) {
+  if (sievedir_script_exists(sieve_dir, buf_s(newname))==TRUE) {
     prot_printf(conn, "NO (ALREADYEXISTS) \"Script %s already exists.\"\r\n",
-                newname->s);
+                buf_s(newname));
     return TIMSIEVE_EXISTS;
   }
 
-  result = sievedir_rename_script(sieve_dir, oldname->s, newname->s);
+  result = sievedir_rename_script(sieve_dir, buf_s(oldname), buf_s(newname));
   if (result == SIEVEDIR_OK) {
       prot_printf(conn,"OK\r\n");
       sync_log_sieve(sieved_userid);
@@ -471,7 +471,7 @@ int cmd_havespace(struct protstream *conn, const struct buf *sieve_name, unsigne
     /* see if this would put the user over quota */
     maxscripts = config_getint(IMAPOPT_SIEVE_MAXSCRIPTS);
 
-    if (sievedir_num_scripts(sieve_dir, sieve_name->s)+1 > maxscripts)
+    if (sievedir_num_scripts(sieve_dir, buf_s(sieve_name))+1 > maxscripts)
     {
         prot_printf(conn,
                     "NO (QUOTA/MAXSCRIPTS) \"You are only allowed %d scripts on this server\"\r\n",

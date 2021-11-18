@@ -763,47 +763,47 @@ static void cmdloop(void)
             }
             return;
         }
-        if (!cmd.s[0]) {
+        if (!buf_s(&cmd)[0]) {
             prot_printf(nntp_out, "501 Empty command\r\n");
             eatline(nntp_in, c);
             continue;
         }
-        if (Uislower(cmd.s[0]))
-            cmd.s[0] = toupper((unsigned char) cmd.s[0]);
-        for (p = &cmd.s[1]; *p; p++) {
+        if (Uislower(buf_s(&cmd)[0]))
+            buf_s(&cmd)[0] = toupper((unsigned char) buf_s(&cmd)[0]);
+        for (p = &buf_s(&cmd)[1]; *p; p++) {
             if (Uisupper(*p)) *p = tolower((unsigned char) *p);
         }
 
-        proc_register(config_ident, nntp_clienthost, nntp_userid, index_mboxname(group_state), cmd.s);
+        proc_register(config_ident, nntp_clienthost, nntp_userid, index_mboxname(group_state), buf_s(&cmd));
 
         /* Ihave/Takethis only allowed for feeders */
         if (!(nntp_capa & MODE_FEED) &&
-            strchr("IT", cmd.s[0])) goto noperm;
+            strchr("IT", buf_s(&cmd)[0])) goto noperm;
 
         /* Body/Date/Group/Newgroups/Newnews/Next/Over/Post/Xhdr/Xover/Xpat
            only allowed for readers */
         if (!(nntp_capa & MODE_READ) &&
-            strchr("BDGNOPX", cmd.s[0])) goto noperm;
+            strchr("BDGNOPX", buf_s(&cmd)[0])) goto noperm;
 
         /* Only Authinfo/Capabilities/Check/Head/Help/Ihave/List Active/
            Mode/Quit/Starttls/Stat/Takethis allowed when not logged in */
         if (!nntp_authstate && !allowanonymous &&
-            !strchr("ACHILMQST", cmd.s[0])) goto nologin;
+            !strchr("ACHILMQST", buf_s(&cmd)[0])) goto nologin;
 
         /* In case a [LIST]GROUP fails or
            a retrieval by msgid makes us switch groups */
         strcpy(curgroup, group_state ? group_state->mboxname : "");
 
-        switch (cmd.s[0]) {
+        switch (buf_s(&cmd)[0]) {
         case 'A':
-            if (!strcmp(cmd.s, "Authinfo")) {
+            if (!strcmp(buf_s(&cmd), "Authinfo")) {
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1); /* subcommand */
                 if (c == EOF) goto missingargs;
 
-                lcase(arg1.s);
+                buf_lcase(&arg1);
 
-                if (!strcmp(arg1.s, "user") || !strcmp(arg1.s, "pass")) {
+                if (!strcmp(buf_s(&arg1), "user") || !strcmp(buf_s(&arg1), "pass")) {
                     if (c != ' ') goto missingargs;
                     c = getuserpass(nntp_in, &arg2); /* user/pass */
                     if (c == EOF) goto missingargs;
@@ -811,16 +811,17 @@ static void cmdloop(void)
                     if (c == '\r') c = prot_getc(nntp_in);
                     if (c != '\n') goto extraargs;
 
-                    if (arg1.s[0] == 'u')
-                        cmd_authinfo_user(arg2.s);
+                    if (buf_s(&arg1)[0] == 'u')
+                        cmd_authinfo_user(buf_s(&arg2));
                     else
-                        cmd_authinfo_pass(arg2.s);
+                        cmd_authinfo_pass(buf_s(&arg2));
                 }
-                else if (!strcmp(arg1.s, "sasl") || !strcmp(arg1.s, "generic")) {
-                    arg2.len = arg3.len = 0;
+                else if (!strcmp(buf_s(&arg1), "sasl") || !strcmp(buf_s(&arg1), "generic")) {
+                    buf_reset(&arg2);
+                    buf_reset(&arg3);
 
                     /* mech name required for SASL but not GENERIC */
-                    if ((arg1.s[0] == 's') && (c != ' ')) goto missingargs;
+                    if ((buf_s(&arg1)[0] == 's') && (c != ' ')) goto missingargs;
 
                     if (c == ' ') {
                         c = getword(nntp_in, &arg2); /* mech name */
@@ -835,8 +836,8 @@ static void cmdloop(void)
                     if (c == '\r') c = prot_getc(nntp_in);
                     if (c != '\n') goto extraargs;
 
-                    cmd_authinfo_sasl(arg1.s, arg2.len ? arg2.s : NULL,
-                                      arg3.len ? arg3.s : NULL);
+                    cmd_authinfo_sasl(buf_s(&arg1), buf_len(&arg2) ? buf_s(&arg2) : NULL,
+                                      buf_len(&arg3) ? buf_s(&arg3) : NULL);
                 }
                 else
                     prot_printf(nntp_out,
@@ -844,13 +845,13 @@ static void cmdloop(void)
             }
             else if (!(nntp_capa & MODE_READ)) goto noperm;
             else if (!nntp_authstate && !allowanonymous) goto nologin;
-            else if (!strcmp(cmd.s, "Article")) {
+            else if (!strcmp(buf_s(&cmd), "Article")) {
                 char *msgid;
 
                 mode = ARTICLE_ALL;
 
               article:
-                if (arg1.s) *arg1.s = 0;
+                if (buf_s(&arg1)) *buf_s(&arg1) = 0;
 
                 if (c == ' ') {
                     c = getword(nntp_in, &arg1); /* number/msgid (optional) */
@@ -859,12 +860,12 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                if (parserange(arg1.s, &uid, NULL, &msgid, &be) != -1) {
+                if (parserange(buf_s(&arg1), &uid, NULL, &msgid, &be) != -1) {
                     if (be) {
-                        if (arg1.s && *arg1.s)
-                            prot_printf(be->out, "%s %s\r\n", cmd.s, arg1.s);
+                        if (buf_s(&arg1) && *buf_s(&arg1))
+                            prot_printf(be->out, "%s %s\r\n", buf_s(&cmd), buf_s(&arg1));
                         else
-                            prot_printf(be->out, "%s\r\n", cmd.s);
+                            prot_printf(be->out, "%s\r\n", buf_s(&cmd));
 
                         if (be != backend_current) {
                             r = read_response(be, 0, &result);
@@ -887,7 +888,7 @@ static void cmdloop(void)
             break;
 
         case 'B':
-            if (!strcmp(cmd.s, "Body")) {
+            if (!strcmp(buf_s(&cmd), "Body")) {
                 mode = ARTICLE_BODY;
                 goto article;
             }
@@ -895,8 +896,8 @@ static void cmdloop(void)
             break;
 
         case 'C':
-            if (!strcmp(cmd.s, "Capabilities")) {
-                arg1.len = 0;
+            if (!strcmp(buf_s(&cmd), "Capabilities")) {
+                buf_reset(&arg1);
 
                 if (c == ' ') {
                     c = getword(nntp_in, &arg1); /* keyword (optional) */
@@ -905,21 +906,21 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                cmd_capabilities(arg1.s);
+                cmd_capabilities(buf_s(&arg1));
             }
 #ifdef HAVE_ZLIB
-            else if (!strcmp(cmd.s, "Compress")) {
+            else if (!strcmp(buf_s(&cmd), "Compress")) {
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1);
                 if (c == EOF) goto missingargs;
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                cmd_compress(arg1.s);
+                cmd_compress(buf_s(&arg1));
             }
 #endif /* HAVE_ZLIB */
             else if (!(nntp_capa & MODE_FEED)) goto noperm;
-            else if (!strcmp(cmd.s, "Check")) {
+            else if (!strcmp(buf_s(&cmd), "Check")) {
                 mode = POST_CHECK;
                 goto ihave;
             }
@@ -927,7 +928,7 @@ static void cmdloop(void)
             break;
 
         case 'D':
-            if (!strcmp(cmd.s, "Date")) {
+            if (!strcmp(buf_s(&cmd), "Date")) {
                 time_t now = time(NULL);
                 struct tm *my_tm = gmtime(&now);
                 char buf[15];
@@ -942,11 +943,11 @@ static void cmdloop(void)
             break;
 
         case 'G':
-            if (!strcmp(cmd.s, "Group")) {
-                arg2.len = 0; /* GROUP command (no range) */
+            if (!strcmp(buf_s(&cmd), "Group")) {
+                buf_reset(&arg2); /* GROUP command (no range) */
 
               group:
-#define LISTGROUP (arg2.len)
+#define LISTGROUP (buf_len(&arg2))
 
                 if (!LISTGROUP && c != ' ') goto missingargs;
                 if (c == ' ') {
@@ -961,13 +962,13 @@ static void cmdloop(void)
                 if (c != '\n') goto extraargs;
 
                 be = backend_current;
-                if (arg1.len &&
-                    (r = open_group(arg1.s, 0, &be, NULL))) goto nogroup;
+                if (buf_len(&arg1) &&
+                    (r = open_group(buf_s(&arg1), 0, &be, NULL))) goto nogroup;
                 else if (be) {
-                    prot_printf(be->out, "%s", cmd.s);
-                    if (arg1.len) {
-                        prot_printf(be->out, " %s", arg1.s);
-                        if (LISTGROUP) prot_printf(be->out, " %s", arg2.s);
+                    prot_printf(be->out, "%s", buf_s(&cmd));
+                    if (buf_len(&arg1)) {
+                        prot_printf(be->out, " %s", buf_s(&arg1));
+                        if (LISTGROUP) prot_printf(be->out, " %s", buf_s(&arg2));
                     }
                     prot_printf(be->out, "\r\n");
 
@@ -991,7 +992,7 @@ static void cmdloop(void)
                 }
                 else if (!group_state) goto noopengroup;
                 else if (LISTGROUP &&
-                         parserange(arg2.s, &uid, &last, NULL, NULL) != 0) {
+                         parserange(buf_s(&arg2), &uid, &last, NULL, NULL) != 0) {
                     /* parserange() will handle error code -- do nothing */
                 }
                 else {
@@ -1034,11 +1035,11 @@ static void cmdloop(void)
             break;
 
         case 'H':
-            if (!strcmp(cmd.s, "Head")) {
+            if (!strcmp(buf_s(&cmd), "Head")) {
                 mode = ARTICLE_HEAD;
                 goto article;
             }
-            else if (!strcmp(cmd.s, "Help")) {
+            else if (!strcmp(buf_s(&cmd), "Help")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1046,11 +1047,11 @@ static void cmdloop(void)
             }
             else if (!(nntp_capa & MODE_READ)) goto noperm;
             else if (!nntp_authstate && !allowanonymous) goto nologin;
-            else if (!strcmp(cmd.s, "Hdr")) {
+            else if (!strcmp(buf_s(&cmd), "Hdr")) {
                 char *msgid;
 
               hdr:
-                if (arg2.s) *arg2.s = 0;
+                if (buf_s(&arg2)) *buf_s(&arg2) = 0;
 
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1); /* header */
@@ -1062,13 +1063,13 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                if (parserange(arg2.s, &uid, &last, &msgid, &be) != -1) {
+                if (parserange(buf_s(&arg2), &uid, &last, &msgid, &be) != -1) {
                     if (be) {
-                        if (arg2.s && *arg2.s)
+                        if (buf_s(&arg2) && *buf_s(&arg2))
                             prot_printf(be->out, "%s %s %s\r\n",
-                                        cmd.s, arg1.s, arg2.s);
+                                        buf_s(&cmd), buf_s(&arg1), buf_s(&arg2));
                         else
-                            prot_printf(be->out, "%s %s\r\n", cmd.s, arg1.s);
+                            prot_printf(be->out, "%s %s\r\n", buf_s(&cmd), buf_s(&arg1));
 
                         if (be != backend_current) {
                             r = read_response(be, 0, &result);
@@ -1081,7 +1082,7 @@ static void cmdloop(void)
                         }
                     }
                     else
-                        cmd_hdr(cmd.s, arg1.s, NULL, msgid, uid, last);
+                        cmd_hdr(buf_s(&cmd), buf_s(&arg1), NULL, msgid, uid, last);
                 }
 
                 if (msgid) goto prevgroup;
@@ -1090,7 +1091,7 @@ static void cmdloop(void)
             break;
 
         case 'I':
-            if (!strcmp(cmd.s, "Ihave")) {
+            if (!strcmp(buf_s(&cmd), "Ihave")) {
                 mode = POST_IHAVE;
 
               ihave:
@@ -1100,14 +1101,15 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                cmd_post(arg1.s, mode);
+                cmd_post(buf_s(&arg1), mode);
             }
             else goto badcmd;
             break;
 
         case 'L':
-            if (!strcmp(cmd.s, "List")) {
-                arg1.len = arg2.len = 0;
+            if (!strcmp(buf_s(&cmd), "List")) {
+                buf_reset(&arg1);
+                buf_reset(&arg2);
                 if (c == ' ') {
                     c = getword(nntp_in, &arg1); /* subcommand (optional) */
                     if (c == EOF) goto missingargs;
@@ -1119,13 +1121,13 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                cmd_list(arg1.len ? arg1.s : NULL, arg2.len ? arg2.s : NULL);
+                cmd_list(buf_len(&arg1) ? buf_s(&arg1) : NULL, buf_len(&arg2) ? buf_s(&arg2) : NULL);
 
                 goto prevgroup;  /* In case we did LIST [ACTIVE] */
             }
             else if (!(nntp_capa & MODE_READ)) goto noperm;
             else if (!nntp_authstate && !allowanonymous) goto nologin;
-            else if (!strcmp(cmd.s, "Last")) {
+            else if (!strcmp(buf_s(&cmd), "Last")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1148,8 +1150,8 @@ static void cmdloop(void)
                     if (msgid) free(msgid);
                 }
             }
-            else if (!strcmp(cmd.s, "Listgroup")) {
-                arg1.len = 0;              /* group is optional */
+            else if (!strcmp(buf_s(&cmd), "Listgroup")) {
+                buf_reset(&arg1);              /* group is optional */
                 buf_setcstr(&arg2, "1-");  /* default range is all */
                 buf_cstring(&arg2);        /* appends a '\0' */
                 goto group;
@@ -1158,23 +1160,23 @@ static void cmdloop(void)
             break;
 
         case 'M':
-            if (!strcmp(cmd.s, "Mode")) {
+            if (!strcmp(buf_s(&cmd), "Mode")) {
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1); /* mode */
                 if (c == EOF) goto missingargs;
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                cmd_mode(arg1.s);
+                cmd_mode(buf_s(&arg1));
             }
             else goto badcmd;
             break;
 
         case 'N':
-            if (!strcmp(cmd.s, "Newgroups")) {
+            if (!strcmp(buf_s(&cmd), "Newgroups")) {
                 time_t tstamp;
 
-                arg3.len = 0;
+                buf_reset(&arg3);
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1); /* date */
                 if (c != ' ') goto missingargs;
@@ -1187,19 +1189,19 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                if ((tstamp = parse_datetime(arg1.s, arg2.s,
-                                             arg3.len ? arg3.s : NULL)) < 0)
+                if ((tstamp = parse_datetime(buf_s(&arg1), buf_s(&arg2),
+                                             buf_len(&arg3) ? buf_s(&arg3) : NULL)) < 0)
                     goto baddatetime;
 
                 cmd_newgroups(tstamp);
             }
-            else if (!strcmp(cmd.s, "Newnews")) {
+            else if (!strcmp(buf_s(&cmd), "Newnews")) {
                 time_t tstamp;
 
                 if (!config_getswitch(IMAPOPT_ALLOWNEWNEWS))
                     goto cmddisabled;
 
-                arg4.len = 0;
+                buf_reset(&arg4);
                 if (c != ' ') goto missingargs;
                 c = getword(nntp_in, &arg1); /* wildmat */
                 if (c != ' ') goto missingargs;
@@ -1214,13 +1216,13 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                if ((tstamp = parse_datetime(arg2.s, arg3.s,
-                                             arg4.len ? arg4.s : NULL)) < 0)
+                if ((tstamp = parse_datetime(buf_s(&arg2), buf_s(&arg3),
+                                             buf_len(&arg4) ? buf_s(&arg4) : NULL)) < 0)
                     goto baddatetime;
 
-                cmd_newnews(arg1.s, tstamp);
+                cmd_newnews(buf_s(&arg1), tstamp);
             }
-            else if (!strcmp(cmd.s, "Next")) {
+            else if (!strcmp(buf_s(&cmd), "Next")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1247,11 +1249,11 @@ static void cmdloop(void)
             break;
 
         case 'O':
-            if (!strcmp(cmd.s, "Over")) {
+            if (!strcmp(buf_s(&cmd), "Over")) {
                 char *msgid;
 
               over:
-                if (arg1.s) *arg1.s = 0;
+                if (buf_s(&arg1)) *buf_s(&arg1) = 0;
 
                 if (c == ' ') {
                     c = getword(nntp_in, &arg1); /* range/msgid (optional) */
@@ -1261,14 +1263,14 @@ static void cmdloop(void)
                 if (c != '\n') goto extraargs;
 
                 msgid = NULL;
-                if (parserange(arg1.s, &uid, &last,
+                if (parserange(buf_s(&arg1), &uid, &last,
                                /* XOVER doesn't accept message-id */
-                               (cmd.s[0] == 'X' ? NULL : &msgid), &be) != -1) {
+                               (buf_s(&cmd)[0] == 'X' ? NULL : &msgid), &be) != -1) {
                     if (be) {
-                        if (arg1.s && *arg1.s)
-                            prot_printf(be->out, "%s %s\r\n", cmd.s, arg1.s);
+                        if (buf_s(&arg1) && *buf_s(&arg1))
+                            prot_printf(be->out, "%s %s\r\n", buf_s(&cmd), buf_s(&arg1));
                         else
-                            prot_printf(be->out, "%s\r\n", cmd.s);
+                            prot_printf(be->out, "%s\r\n", buf_s(&cmd));
 
                         if (be != backend_current) {
                             r = read_response(be, 0, &result);
@@ -1290,7 +1292,7 @@ static void cmdloop(void)
             break;
 
         case 'P':
-            if (!strcmp(cmd.s, "Post")) {
+            if (!strcmp(buf_s(&cmd), "Post")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1300,7 +1302,7 @@ static void cmdloop(void)
             break;
 
         case 'Q':
-            if (!strcmp(cmd.s, "Quit")) {
+            if (!strcmp(buf_s(&cmd), "Quit")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1311,7 +1313,7 @@ static void cmdloop(void)
             break;
 
         case 'S':
-            if (!strcmp(cmd.s, "Starttls") && tls_enabled()) {
+            if (!strcmp(buf_s(&cmd), "Starttls") && tls_enabled()) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1320,12 +1322,12 @@ static void cmdloop(void)
 
                 cmd_starttls(0);
             }
-            else if (!strcmp(cmd.s, "Stat")) {
+            else if (!strcmp(buf_s(&cmd), "Stat")) {
                 mode = ARTICLE_STAT;
                 goto article;
             }
             else if (!nntp_authstate && !allowanonymous) goto nologin;
-            else if (!strcmp(cmd.s, "Slave")) {
+            else if (!strcmp(buf_s(&cmd), "Slave")) {
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
@@ -1335,7 +1337,7 @@ static void cmdloop(void)
             break;
 
         case 'T':
-            if (!strcmp(cmd.s, "Takethis")) {
+            if (!strcmp(buf_s(&cmd), "Takethis")) {
                 mode = POST_TAKETHIS;
                 goto ihave;
             }
@@ -1343,13 +1345,13 @@ static void cmdloop(void)
             break;
 
         case 'X':
-            if (!strcmp(cmd.s, "Xhdr")) {
+            if (!strcmp(buf_s(&cmd), "Xhdr")) {
                 goto hdr;
             }
-            else if (!strcmp(cmd.s, "Xover")) {
+            else if (!strcmp(buf_s(&cmd), "Xover")) {
                 goto over;
             }
-            else if (!strcmp(cmd.s, "Xpat")) {
+            else if (!strcmp(buf_s(&cmd), "Xpat")) {
                 char *msgid;
 
                 if (c != ' ') goto missingargs;
@@ -1370,10 +1372,10 @@ static void cmdloop(void)
                 if (c == '\r') c = prot_getc(nntp_in);
                 if (c != '\n') goto extraargs;
 
-                if (parserange(arg2.s, &uid, &last, &msgid, &be) != -1) {
+                if (parserange(buf_s(&arg2), &uid, &last, &msgid, &be) != -1) {
                     if (be) {
                         prot_printf(be->out, "%s %s %s %s\r\n",
-                                    cmd.s, arg1.s, arg2.s, arg3.s);
+                                    buf_s(&cmd), buf_s(&arg1), buf_s(&arg2), buf_s(&arg3));
 
                         if (be != backend_current) {
                             r = read_response(be, 0, &result);
@@ -1386,7 +1388,7 @@ static void cmdloop(void)
                         }
                     }
                     else
-                        cmd_hdr(cmd.s, arg1.s, arg3.s, msgid, uid, last);
+                        cmd_hdr(buf_s(&cmd), buf_s(&arg1), buf_s(&arg3), msgid, uid, last);
                 }
 
                 if (msgid) goto prevgroup;
@@ -1413,7 +1415,7 @@ static void cmdloop(void)
         continue;
 
       cmddisabled:
-        prot_printf(nntp_out, "503 \"%s\" disabled\r\n", cmd.s);
+        prot_printf(nntp_out, "503 \"%s\" disabled\r\n", buf_s(&cmd));
         eatline(nntp_in, c);
         continue;
 
@@ -2282,7 +2284,7 @@ static void cmd_hdr(char *cmd, char *hdr, char *pat, char *msgid,
                 if (!by_msgid) free(msgid);
 
                 prot_printf(nntp_out, "%lu %lu\r\n", by_msgid ? 0 : uid,
-                            size + xref.len + 2); /* +2 for \r\n */
+                            size + buf_len(&xref) + 2); /* +2 for \r\n */
                 buf_free(&xref);
             }
             else if (!strcasecmp(":lines", hdr))
@@ -2547,7 +2549,7 @@ static int newsgroups_cb(const char *mailbox,
     if (userid[0]) return 0;
 
     prot_printf(nntp_out, "%s\t%s\r\n", mailbox+strlen(newsprefix),
-                value->s);
+                buf_s(value));
 
     return 0;
 }
@@ -2808,7 +2810,7 @@ static void cmd_over(char *msgid, unsigned long uid, unsigned long last)
                         over->date ? over->date : "",
                         over->msgid ? over->msgid : "",
                         over->ref ? over->ref : "",
-                        over->bytes + xref.len + 2, /* +2 for \r\n */
+                        over->bytes + buf_len(&xref) + 2, /* +2 for \r\n */
                         over->lines, buf_cstring(&xref));
             buf_free(&xref);
         }
@@ -2930,7 +2932,7 @@ static void add_header(const char *destname, const char **dest,
             if (dest) {
                 /* append to the existing dest header body */
                 buf_appendcstr(&buf, dest[0]);
-                fold = buf.len + 1;
+                fold = buf_len(&buf) + 1;
                 sep = ", ";
             }
 
@@ -3777,7 +3779,7 @@ static void news2mail(message_data_t *msg)
         if (r) continue;
 
         /* add the email address to the RCPT envelope and to our To: header */
-        if (attrib.s) {
+        if (buf_s(&attrib)) {
             smtp_envelope_add_rcpt(&sm_env, buf_cstring(&attrib));
             if (to[0]) strlcat(to, ", ", sizeof(to));
             strlcat(to, buf_cstring(&attrib), sizeof(to));

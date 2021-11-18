@@ -220,13 +220,13 @@ static json_t *get_schedule_address_set(const char *userid,
     static const char *annot =
         DAV_ANNOT_NS "<" XML_NS_CALDAV ">calendar-user-address-set";
     int r = annotatemore_lookupmask(mboxname, annot, httpd_userid, &attrib);
-    if (r || !attrib.len) {
+    if (r || !buf_len(&attrib)) {
         // fetch from my own principal
         char *prinmbox = mboxname_user_mbox(httpd_userid, "#calendars");
         r = annotatemore_lookupmask(prinmbox, annot, httpd_userid, &attrib);
         free(prinmbox);
     }
-    if (!r && attrib.len) {
+    if (!r && buf_len(&attrib)) {
         strarray_t *values = strarray_split(buf_cstring(&attrib), ",", STRARRAY_TRIM);
         int i;
         for (i = 0; i < strarray_size(values); i++) {
@@ -276,7 +276,7 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
     unsigned long supported_components = -1; /* ALL component types by default. */
     r = annotatemore_lookupmask_mbe(mbentry, calcompset_annot,
                                     rock->req->accountid, &attrib);
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         supported_components = strtoul(buf_cstring(&attrib), NULL, 10);
         buf_free(&attrib);
     }
@@ -313,7 +313,7 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
         r = annotatemore_lookupmask_mbe(mbentry, displayname_annot,
                                         httpd_userid, &attrib);
         /* fall back to last part of mailbox name */
-        if (r || !attrib.len) buf_setcstr(&attrib, id);
+        if (r || !buf_len(&attrib)) buf_setcstr(&attrib, id);
         json_object_set_new(obj, "name", json_string(buf_cstring(&attrib)));
         buf_free(&attrib);
     }
@@ -324,7 +324,7 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
             DAV_ANNOT_NS "<" XML_NS_APPLE ">calendar-color";
         r = annotatemore_lookupmask_mbe(mbentry, color_annot,
                                         httpd_userid, &attrib);
-        if (!r && attrib.len)
+        if (!r && buf_len(&attrib))
             json_object_set_new(obj, "color", json_string(buf_cstring(&attrib)));
         buf_free(&attrib);
     }
@@ -336,7 +336,7 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
             DAV_ANNOT_NS "<" XML_NS_APPLE ">calendar-order";
         r = annotatemore_lookupmask_mbe(mbentry, order_annot,
                                         httpd_userid, &attrib);
-        if (!r && attrib.len) {
+        if (!r && buf_len(&attrib)) {
             char *ptr;
             long val = strtol(buf_cstring(&attrib), &ptr, 10);
             if (ptr && *ptr == '\0') {
@@ -359,7 +359,7 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
             DAV_ANNOT_NS "<" XML_NS_CALDAV ">X-FM-isVisible";
         r = annotatemore_lookupmask_mbe(mbentry, visible_annot,
                                         httpd_userid, &attrib);
-        if (!r && attrib.len) {
+        if (!r && buf_len(&attrib)) {
             const char *val = buf_cstring(&attrib);
             if (!strncmp(val, "true", 4) || !strncmp(val, "1", 1)) {
                 is_visible = 1;
@@ -703,7 +703,7 @@ static int getcalendarchanges_cb(const mbentry_t *mbentry, void *vrock)
     unsigned long supported_components = -1; /* ALL component types by default. */
     r = annotatemore_lookupmask_mbe(mbentry, calcompset_annot,
                                     rock->req->accountid, &attrib);
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         supported_components = strtoul(buf_cstring(&attrib), NULL, 10);
         buf_free(&attrib);
     }

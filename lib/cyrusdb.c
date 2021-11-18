@@ -480,7 +480,7 @@ EXPORTED int cyrusdb_undumpfile(struct db *db,
 
     while (buf_getline(&line, f)) {
         /* skip blank lines */
-        if (!line.len) continue;
+        if (!buf_len(&line)) continue;
         str = buf_cstring(&line);
         /* skip comments */
         if (str[0] == '#') continue;
@@ -489,14 +489,14 @@ EXPORTED int cyrusdb_undumpfile(struct db *db,
 
         /* deletion (no value) */
         if (!tab) {
-            r = cyrusdb_delete(db, str, line.len, tid, 1);
+            r = cyrusdb_delete(db, str, buf_len(&line), tid, 1);
             if (r) goto out;
         }
 
         /* store */
         else {
             unsigned klen = (tab - str);
-            unsigned vlen = line.len - klen - 1; /* TAB */
+            unsigned vlen = buf_len(&line) - klen - 1; /* TAB */
             r = cyrusdb_store(db, str, klen, tab + 1, vlen, tid);
             if (r) goto out;
         }

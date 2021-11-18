@@ -460,7 +460,7 @@ static int notify(void *ac, void *ic, void *sc __attribute__((unused)),
     int i;
 
     for (i = 0; i < strarray_size(nc->options); i++) {
-        if (opts.len)
+        if (buf_len(&opts))
             buf_putc(&opts, ' ');
         buf_appendcstr(&opts, strarray_nth(nc->options, i));
     }

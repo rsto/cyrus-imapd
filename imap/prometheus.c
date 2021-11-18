@@ -89,7 +89,7 @@ EXPORTED const char *prometheus_stats_dir(void)
 
         buf_setcstr(&statsdir, tmp);
 
-        if (statsdir.s[statsdir.len-1] != '/')
+        if (buf_s(&statsdir)[buf_len(&statsdir)-1] != '/')
             buf_putc(&statsdir, '/');
     }
     else {

@@ -1384,18 +1384,18 @@ const char *nth_compound(unsigned int n,
     }
 
     if ((n / 100) % 10) {
-        if (res->len && sep)
+        if (buf_len(res) && sep)
             buf_appendcstr(res, sep);
         buf_appendcstr(res, words[19 + (n / 100) % 10]);
     }
 
     if ((n / 10) % 10) {
-        if (res->len && sep)
+        if (buf_len(res) && sep)
             buf_appendcstr(res, sep);
         buf_appendcstr(res, words[10 + (n / 10) % 10]);
     }
 
-    if (res->len && sep)
+    if (buf_len(res) && sep)
         buf_appendcstr(res, sep);
     buf_appendcstr(res, words[n % 10]);
 
@@ -1452,10 +1452,10 @@ static int finder(void *rock,
     buf_appendmap(&kbuf, key, keylen);
     buf_cstring(&kbuf);
 
-    expected = hash_lookup(kbuf.s, exphash);
+    expected = hash_lookup(buf_s(&kbuf), exphash);
     CU_ASSERT_EQUAL(datalen, strlen(expected));
     CU_ASSERT_EQUAL(0, memcmp(data, expected, datalen));
-    hash_del(kbuf.s, exphash);
+    hash_del(buf_s(&kbuf), exphash);
     free(expected);
     buf_free(&kbuf);
 

@@ -296,7 +296,7 @@ static int _mbox_find_specialuse_cb(const mbentry_t *mbentry, void *rock)
 
     annotatemore_lookup_mbe(mbentry, "/specialuse", req->accountid, &attrib);
 
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         strarray_t *uses = strarray_split(buf_cstring(&attrib), " ", STRARRAY_TRIM);
         if (strarray_find_case(uses, d->use, 0) >= 0) {
             d->mboxname = xstrdup(mbentry->name);
@@ -357,7 +357,7 @@ static char *_mbox_get_role(jmap_req_t *req, const mbname_t *mbname)
     /* Does this mailbox have an IMAP special use role? */
     annotatemore_lookup(mbname_intname(mbname), "/specialuse",
                         req->accountid, &buf);
-    if (buf.len) {
+    if (buf_len(&buf)) {
         strarray_t *uses = strarray_split(buf_cstring(&buf), " ", STRARRAY_TRIM);
         if (uses->count) {
             /* In IMAP, a mailbox may have multiple roles. But in JMAP we only
@@ -382,7 +382,7 @@ static char *_mbox_get_name(const char *account_id, const mbname_t *mbname)
 
     const char *annot = IMAP_ANNOT_NS "displayname";
     int r = annotatemore_lookup(mbname_intname(mbname), annot, account_id, &attrib);
-    if (!r && attrib.len) {
+    if (!r && buf_len(&attrib)) {
         /* We got a mailbox with a displayname annotation. Use it. */
         return buf_release(&attrib);
     }
@@ -437,7 +437,7 @@ static char *_mbox_get_color(jmap_req_t *req, const mbname_t *mbname)
     /* Does this mailbox have a defined color */
     // XXX: should we align with calendars and addressbooks?
     annotatemore_lookupmask(mbname_intname(mbname), annot, req->userid, &buf);
-    if (buf.len) {
+    if (buf_len(&buf)) {
         return buf_release(&buf);
     }
 
@@ -452,7 +452,7 @@ static int _mbox_get_showaslabel(jmap_req_t *req, const mbname_t *mbname)
     struct buf attrib = BUF_INITIALIZER;
     const char *annot = IMAP_ANNOT_NS "showaslabel";
     int r = annotatemore_lookupmask(mbname_intname(mbname), annot, httpd_userid, &attrib);
-    if (!r && attrib.len) {
+    if (!r && buf_len(&attrib)) {
         /* We got a mailbox with an annotation. Use it. */
         show_as_label = atoi(buf_cstring(&attrib));
     }
@@ -479,7 +479,7 @@ static int _mbox_get_sortorder(jmap_req_t *req, const mbname_t *mbname)
     /* Ignore lookup errors here. */
     const char *annot = IMAP_ANNOT_NS "sortorder";
     annotatemore_lookupmask(mbname_intname(mbname), annot, httpd_userid, &attrib);
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         uint64_t t = str2uint64(buf_cstring(&attrib));
         if (t < INT_MAX) {
             sort_order = (int) t;

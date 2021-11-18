@@ -230,7 +230,7 @@ static int write_folders(struct conversations_state *state)
 
     const char *key = state->folders_byname ? FNKEY : FIKEY;
     r = cyrusdb_store(state->db, key, strlen(key),
-                      buf.s, buf.len, &state->txn);
+                      buf_s(&buf), buf_len(&buf), &state->txn);
 
     buf_free(&buf);
 
@@ -679,7 +679,7 @@ static int _conversations_set_key(struct conversations_state *state,
 
     r = cyrusdb_store(state->db,
                       key, keylen,
-                      buf.s, buf.len,
+                      buf_s(&buf), buf_len(&buf),
                       &state->txn);
 
     buf_free(&buf);
@@ -872,7 +872,7 @@ EXPORTED int conversation_storestatus(struct conversations_state *state,
 
     int r = cyrusdb_store(state->db,
                           key, keylen,
-                          buf.s, buf.len,
+                          buf_s(&buf), buf_len(&buf),
                           &state->txn);
 
     buf_free(&buf);
@@ -977,7 +977,7 @@ EXPORTED int conversation_store(struct conversations_state *state,
 
     conv_to_buf(conv, &buf, state->counted_flags ? state->counted_flags->count : 0);
 
-    int r = cyrusdb_store(state->db, key, keylen, buf.s, buf.len, &state->txn);
+    int r = cyrusdb_store(state->db, key, keylen, buf_s(&buf), buf_len(&buf), &state->txn);
 
     buf_free(&buf);
 
@@ -1049,7 +1049,7 @@ static int _write_quota(struct conversations_state *state)
 
     struct buf buf = BUF_INITIALIZER;
     buf_printf(&buf, "1 %%(E %lld S %lld)", (long long)emails, (long long)storage);
-    int r = cyrusdb_store(state->db, "Q", 1, buf.s, buf.len, &state->txn);
+    int r = cyrusdb_store(state->db, "Q", 1, buf_s(&buf), buf_len(&buf), &state->txn);
     buf_free(&buf);
 
     return r;
@@ -1980,7 +1980,7 @@ static int _guid_one(struct guid_foreach_rock *frock,
 
     /* ensure a NULL terminated key string */
     buf_cstring(&frock->partbuf);
-    char *item = frock->partbuf.s;
+    char *item = buf_s(&frock->partbuf);
 
     /* Parse G record key */
     p = strchr(item, ':');

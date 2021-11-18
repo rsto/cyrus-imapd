@@ -1213,7 +1213,7 @@ HIDDEN char *caldav_scheddefault(const char *userid)
     struct buf attrib = BUF_INITIALIZER;
 
     int r = annotatemore_lookupmask(calhomename, annotname, userid, &attrib);
-    if (!r && attrib.len) {
+    if (!r && buf_len(&attrib)) {
         defaultname = buf_release(&attrib);
     }
     else defaultname = xstrdup(SCHED_DEFAULT);
@@ -1929,7 +1929,7 @@ static int export_calendar(struct transaction_t *txn)
     r = annotatemore_lookupmask_mbox(mailbox, displayname_annot,
                                      httpd_userid, &name);
     /* fall back to last part of mailbox name */
-    if (r || !name.len) buf_setcstr(&name, strrchr(mailbox_name(mailbox), '.') + 1);
+    if (r || !buf_len(&name)) buf_setcstr(&name, strrchr(mailbox_name(mailbox), '.') + 1);
 
     buf_reset(&txn->buf);
     buf_printf(&txn->buf, "%s.%s", buf_cstring(&name), mime->file_ext);
@@ -2231,7 +2231,7 @@ static int list_cal_cb(const mbentry_t *mbentry, void *rock)
     r = annotatemore_lookupmask_mbe(mbentry, displayname_annot,
                                     httpd_userid, &displayname);
     /* fall back to the last part of the mailbox name */
-    if (r || !displayname.len) buf_setcstr(&displayname, shortname);
+    if (r || !buf_len(&displayname)) buf_setcstr(&displayname, shortname);
 
     /* Make sure we have room in our array */
     if (lrock->len == lrock->alloc) {
@@ -2825,7 +2825,7 @@ static int caldav_mkcol(struct mailbox *mailbox)
                                 httpd_userid, &attrib);
     if (r) return HTTP_SERVER_ERROR;
 
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         types = strtoul(buf_cstring(&attrib), NULL, 10);
     }
 
@@ -5163,11 +5163,11 @@ static int apply_comp_timerange(struct comp_filter *compfilter,
 
             /* Load message containing the resource and parse iCal data */
             if (!comp) {
-                if (!fctx->msg_buf.len) {
+                if (!buf_len(&fctx->msg_buf)) {
                     mailbox_map_record(fctx->mailbox,
                                        fctx->record, &fctx->msg_buf);
                 }
-                if (fctx->msg_buf.len && !fctx->obj) {
+                if (buf_len(&fctx->msg_buf) && !fctx->obj) {
                     fctx->obj =
                         icalparser_parse_string(buf_cstring(&fctx->msg_buf) +
                                                 fctx->record->header_size);
@@ -5274,9 +5274,9 @@ static int apply_calfilter(struct propfind_ctx *fctx, void *data)
     if ((calfilter->flags & PARSE_ICAL) || cdata->comp_flags.recurring) {
         /* Load message containing the resource and parse iCal data */
         if (!ical) {
-            if (!fctx->msg_buf.len)
+            if (!buf_len(&fctx->msg_buf))
                 mailbox_map_record(fctx->mailbox, fctx->record, &fctx->msg_buf);
-            if (!fctx->msg_buf.len) return 0;
+            if (!buf_len(&fctx->msg_buf)) return 0;
 
             ical = fctx->obj =
                 icalparser_parse_string(buf_cstring(&fctx->msg_buf) +
@@ -5773,7 +5773,7 @@ static int propfind_scheduser(const xmlChar *name, xmlNsPtr ns,
         message_unref(&m);
     }
 
-    if (buf.len) {
+    if (buf_len(&buf)) {
         rc = 0;
         xmlNodePtr node = xml_add_prop(HTTP_OK, fctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
                                        name, ns, NULL, 0);
@@ -5890,11 +5890,11 @@ static int propfind_caldata(const xmlChar *name, xmlNsPtr ns,
 
         if (!fctx->record) return HTTP_NOT_FOUND;
 
-        if (!fctx->msg_buf.len)
+        if (!buf_len(&fctx->msg_buf))
             mailbox_map_record(fctx->mailbox, fctx->record, &fctx->msg_buf);
-        if (!fctx->msg_buf.len) return HTTP_SERVER_ERROR;
+        if (!buf_len(&fctx->msg_buf)) return HTTP_SERVER_ERROR;
 
-        data = fctx->msg_buf.s + fctx->record->header_size;
+        data = buf_s(&fctx->msg_buf) + fctx->record->header_size;
         datalen = fctx->record->size - fctx->record->header_size;
 
         if (cdata->comp_flags.tzbyref) {
@@ -5998,7 +5998,7 @@ int propfind_calurl(const xmlChar *name, xmlNsPtr ns,
             int r = annotatemore_lookupmask(mailboxname, annotname,
                                             httpd_userid, &calbuf);
             free(mailboxname);
-            if (!r && calbuf.len) {
+            if (!r && buf_len(&calbuf)) {
                 buf_putc(&calbuf, '/');
                 cal = buf_cstring(&calbuf);
             }
@@ -6074,7 +6074,7 @@ static int propfind_calcompset(const xmlChar *name, xmlNsPtr ns,
                                     httpd_userid, &attrib);
     if (r) return HTTP_SERVER_ERROR;
 
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         types = strtoul(buf_cstring(&attrib), NULL, 10);
     }
     else {
@@ -6303,7 +6303,7 @@ static int propfind_caluseraddr_all(const xmlChar *name, xmlNsPtr ns,
         r = annotatemore_lookupmask(mailboxname, annotname,
                                     fctx->req_tgt->userid, &fctx->buf);
         free(mailboxname);
-        if (!r && fctx->buf.len) {
+        if (!r && buf_len(&fctx->buf)) {
             strarray_t *items = strarray_split(buf_cstring(&fctx->buf), ",", STRARRAY_TRIM);
             if (isemail) {
                 xml_add_href(node, fctx->ns[NS_DAV], strarray_nth(items, 0));
@@ -6352,7 +6352,7 @@ static int propfind_caluseraddr_all(const xmlChar *name, xmlNsPtr ns,
         buf_reset(&fctx->buf);
         r = annotatemore_lookupmask(fctx->mbentry->name, annotname,
                                     fctx->req_tgt->userid, &fctx->buf);
-        if (!r && fctx->buf.len) {
+        if (!r && buf_len(&fctx->buf)) {
             strarray_t *addr =
                 strarray_split(buf_cstring(&fctx->buf), ",", STRARRAY_TRIM);
 
@@ -6513,7 +6513,7 @@ static int propfind_caltransp(const xmlChar *name, xmlNsPtr ns,
     buf_reset(&fctx->buf);
     if (!annotatemore_lookupmask(fctx->mbentry->name,
                                  DAV_ANNOT_NS "<" XML_NS_CALDAV ">schedule-calendar-transp",
-                                 httpd_userid, &fctx->buf) && fctx->buf.len) {
+                                 httpd_userid, &fctx->buf) && buf_len(&fctx->buf)) {
         xmlNodePtr node = xml_add_prop(HTTP_OK, fctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
                                        name, ns, BAD_CAST NULL, 0);
         xmlNewChild(node, fctx->ns[NS_CALDAV], BAD_CAST buf_cstring(&fctx->buf), 0);
@@ -6600,9 +6600,9 @@ static int propfind_timezone(const xmlChar *name, xmlNsPtr ns,
         }
 
         if (r) r = HTTP_SERVER_ERROR;
-        else if (attrib.len)  {
+        else if (buf_len(&attrib))  {
             data = buf_cstring(&attrib);
-            datalen = attrib.len;
+            datalen = buf_len(&attrib);
         }
         else if ((namespace_calendar.allow & ALLOW_CAL_NOTZ)) {
             /*  Check for CALDAV:calendar-timezone-id */
@@ -6613,7 +6613,7 @@ static int propfind_timezone(const xmlChar *name, xmlNsPtr ns,
                                              httpd_userid, &attrib);
 
             if (r) r = HTTP_SERVER_ERROR;
-            else if (!attrib.len) r = HTTP_NOT_FOUND;
+            else if (!buf_len(&attrib)) r = HTTP_NOT_FOUND;
             else {
                 /* Fetch tz from builtin repository */
                 icaltimezone *tz =
@@ -6785,7 +6785,7 @@ static int propfind_availability(const xmlChar *name, xmlNsPtr ns,
                                              httpd_userid, &attrib);
         }
 
-        if (!attrib.len && xmlStrcmp(ns->href, BAD_CAST XML_NS_CALDAV)) {
+        if (!buf_len(&attrib) && xmlStrcmp(ns->href, BAD_CAST XML_NS_CALDAV)) {
             /* Check for CALDAV:calendar-availability */
             buf_reset(&fctx->buf);
             buf_printf(&fctx->buf, DAV_ANNOT_NS "<%s>%s", XML_NS_CALDAV, name);
@@ -6798,10 +6798,10 @@ static int propfind_availability(const xmlChar *name, xmlNsPtr ns,
         }
 
         if (r) r = HTTP_SERVER_ERROR;
-        else if (!attrib.len) r = HTTP_NOT_FOUND;
+        else if (!buf_len(&attrib)) r = HTTP_NOT_FOUND;
         else {
             data = buf_cstring(&attrib);
-            datalen = attrib.len;
+            datalen = buf_len(&attrib);
         }
     }
 
@@ -6958,7 +6958,7 @@ static int propfind_tzid(const xmlChar *name, xmlNsPtr ns,
                                      httpd_userid, &attrib);
 
     if (r) r = HTTP_SERVER_ERROR;
-    else if (attrib.len) {
+    else if (buf_len(&attrib)) {
         value = buf_cstring(&attrib);
     }
     else {
@@ -6971,7 +6971,7 @@ static int propfind_tzid(const xmlChar *name, xmlNsPtr ns,
         }
 
         if (r) r = HTTP_SERVER_ERROR;
-        else if (!attrib.len) r = HTTP_NOT_FOUND;
+        else if (!buf_len(&attrib)) r = HTTP_NOT_FOUND;
         else {
             icalcomponent *ical, *vtz;
             icalproperty *tzid;
@@ -7864,14 +7864,14 @@ icalcomponent *busytime_query_local(struct transaction_t *txn,
         char *userid = mboxname_to_userid(mailboxname);
         char *mboxname = caldav_mboxname(userid, SCHED_INBOX);
         if (!annotatemore_lookupmask(mboxname, prop_annot,
-                                     httpd_userid, &attrib) && attrib.len) {
+                                     httpd_userid, &attrib) && buf_len(&attrib)) {
             add_vavailability(vavail,
                               icalparser_parse_string(buf_cstring(&attrib)));
         }
         else {
             prop_annot = DAV_ANNOT_NS "<" XML_NS_CS ">calendar-availability";
             if (!annotatemore_lookupmask(mboxname, prop_annot,
-                                         httpd_userid, &attrib) && attrib.len) {
+                                         httpd_userid, &attrib) && buf_len(&attrib)) {
                 add_vavailability(vavail,
                                   icalparser_parse_string(buf_cstring(&attrib)));
             }
@@ -8173,7 +8173,7 @@ int caldav_store_resource(struct transaction_t *txn, icalcomponent *ical,
     }
 
     if (!annotatemore_lookupmask_mbox(mailbox, prop_annot, httpd_userid, &attrib)
-        && attrib.len) {
+        && buf_len(&attrib)) {
         unsigned long supp_comp = strtoul(buf_cstring(&attrib), NULL, 10);
 
         buf_free(&attrib);

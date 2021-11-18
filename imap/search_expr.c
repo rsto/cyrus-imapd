@@ -1283,7 +1283,7 @@ static int search_list_match(message_t *m,
     // XXX - this should never happen
 
     r = getter(m, &buf);
-    if (!r && buf.len) {
+    if (!r && buf_len(&buf)) {
         const char *val = buf_cstring(&buf);
         r = (strarray_find(internal, val, 0) >= 0) ? 1 : 0;
     }
@@ -1363,8 +1363,8 @@ static int search_string_match(message_t *m,
     struct search_string_internal *internal = internalised;
 
     r = getter(m, &buf);
-    if (!r && buf.len)
-        r = charset_searchstring(internal->s, internal->pat, buf.s, buf.len, charset_flags);
+    if (!r && buf_len(&buf))
+        r = charset_searchstring(internal->s, internal->pat, buf_s(&buf), buf_len(&buf), charset_flags);
     else
         r = 0;
     buf_free(&buf);
@@ -1431,13 +1431,13 @@ static int search_listid_match(message_t *m, const union search_value *v,
 
     r = message_get_listid(m, &buf);
     if (!r) {
-        r = charset_searchstring(v->s, pat, buf.s, buf.len, charset_flags);
+        r = charset_searchstring(v->s, pat, buf_s(&buf), buf_len(&buf), charset_flags);
         if (r) goto out;    // success
     }
 
     r = message_get_mailinglist(m, &buf);
     if (!r) {
-        r = charset_searchstring(v->s, pat, buf.s, buf.len, charset_flags);
+        r = charset_searchstring(v->s, pat, buf_s(&buf), buf_len(&buf), charset_flags);
         if (r) goto out;    // success
     }
 
@@ -1509,13 +1509,13 @@ static int search_header_match(message_t *m, const union search_value *v,
                           &buf);
     if (!r) {
         if (*v->s) {
-            r = charset_searchstring(internal->s, internal->pat, buf.s, buf.len, charset_flags);
+            r = charset_searchstring(internal->s, internal->pat, buf_s(&buf), buf_len(&buf), charset_flags);
         }
         else {
             /* RFC 3501: If the string to search is zero-length, this matches
              * all messages that have a header line with the specified
              * field-name regardless of the contents. */
-            r = buf.len ? 1 : 0;
+            r = buf_len(&buf) ? 1 : 0;
         }
     }
     else
@@ -1878,20 +1878,20 @@ static int _search_annot_match(const struct buf *match,
     /* These cases are not explicitly defined in RFC 5257 */
 
     /* NIL matches NIL and nothing else */
-    if (match->s == NULL)
-        return (value->s == NULL);
-    if (value->s == NULL)
+    if (buf_s(match) == NULL)
+        return (buf_s(value) == NULL);
+    if (buf_s(value) == NULL)
         return 0;
 
     /* empty matches empty and nothing else */
-    if (match->len == 0)
-        return (value->len == 0);
-    if (value->len == 0)
+    if (buf_len(match) == 0)
+        return (buf_len(value) == 0);
+    if (buf_len(value) == 0)
         return 0;
 
     /* RFC 5257 seems to define a simple CONTAINS style search */
-    return !!memmem(value->s, value->len,
-                    match->s, match->len);
+    return !!memmem(buf_s(value), buf_len(value),
+                    buf_s(match), buf_len(match));
 }
 
 static void _search_annot_callback(const char *mboxname __attribute__((unused)),
@@ -2317,7 +2317,7 @@ static int searchmsg_cb(int isbody, charset_t charset, int encoding,
         /* body-like */
         if (charset == CHARSET_UNKNOWN_CHARSET) return 0;
         sr->result = charset_searchfile(sr->substr, sr->pat,
-                                        data->s, data->len,
+                                        buf_s(data), buf_len(data),
                                         charset, encoding, charset_flags);
     }
     if (sr->result) return 1; /* found it, exit early */

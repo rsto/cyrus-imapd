@@ -1877,7 +1877,7 @@ static json_t *jmap_contact_from_vcard(const char *userid,
     buf_free(&buf);
     annotatemore_msg_lookupmask(mailbox, record->uid, annot, userid, &buf);
     double val = 0;
-    if (buf.len) val = strtod(buf_cstring(&buf), NULL);
+    if (buf_len(&buf)) val = strtod(buf_cstring(&buf), NULL);
 
     // need to keep the x- version while AJAXUI is around
     json_object_set_new(obj, "importance", json_real(val));

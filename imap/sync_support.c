@@ -404,7 +404,7 @@ static int sync_getline(struct protstream *in, struct buf *buf)
             buf_cstring(buf);
             return c;
         }
-        if (buf->len > config_maxword)
+        if (buf_len(buf) > config_maxword)
             fatal("word too long", EX_IOERR);
         buf_putc(buf, c);
     }
@@ -1416,7 +1416,7 @@ void encode_annotations(struct dlist *parent,
             dlist_setatom(aa, "ENTRY", sa->entry);
             dlist_setatom(aa, "USERID", sa->userid);
             dlist_setnum64(aa, "MODSEQ", sa->modseq);
-            dlist_setmap(aa, "VALUE", sa->value.s, sa->value.len);
+            dlist_setmap(aa, "VALUE", buf_s(&sa->value), buf_len(&sa->value));
         }
     }
 
@@ -2116,7 +2116,7 @@ int sync_parse_response(const char *cmd, struct protstream *in,
     if (c != ' ') goto parse_err;
 
     kl = dlist_newlist(NULL, cmd);
-    while (!strcmp(response.s, "*")) {
+    while (!strcmp(buf_s(&response), "*")) {
         struct dlist *item = sync_parseline(in);
         if (!item) goto parse_err;
         dlist_stitch(kl, item);
@@ -2126,7 +2126,7 @@ int sync_parse_response(const char *cmd, struct protstream *in,
 
     if (in->userdata) {
         /* check IMAP response tag */
-        if (strcmp(response.s, buf_cstring((struct buf *) in->userdata)))
+        if (strcmp(buf_s(&response), buf_cstring((struct buf *) in->userdata)))
             goto parse_err;
 
         /* first word was IMAP response tag - get response token */
@@ -2136,55 +2136,55 @@ int sync_parse_response(const char *cmd, struct protstream *in,
         if (c != ' ') goto parse_err;
     }
 
-    if (!strcmp(response.s, "OK")) {
+    if (!strcmp(buf_s(&response), "OK")) {
         if (klp) *klp = kl;
         else dlist_free(&kl);
         eatline(in, c);
         return 0;
     }
-    if (!strcmp(response.s, "BYE")) {
+    if (!strcmp(buf_s(&response), "BYE")) {
         /* server is shutting down, don't be surprised by it */
         syslog(LOG_DEBUG, "received BYE: replica was shut down");
         dlist_free(&kl);
         eatline(in, c);
         return IMAP_BYE_LOGOUT;
     }
-    if (!strcmp(response.s, "NO")) {
+    if (!strcmp(buf_s(&response), "NO")) {
         dlist_free(&kl);
         sync_getline(in, &errmsg);
-        syslog(LOG_ERR, "%s received NO response: %s", cmd, errmsg.s);
+        syslog(LOG_ERR, "%s received NO response: %s", cmd, buf_s(&errmsg));
 
         /* Slight hack to transform certain error strings into equivalent
          * imap_err value so that caller has some idea of cause.  Match
          * this to the logic at sync_response() */
-        if (!strncmp(errmsg.s, "IMAP_INVALID_USER ",
+        if (!strncmp(buf_s(&errmsg), "IMAP_INVALID_USER ",
                      strlen("IMAP_INVALID_USER ")))
             return IMAP_INVALID_USER;
-        else if (!strncmp(errmsg.s, "IMAP_MAILBOX_NONEXISTENT ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_MAILBOX_NONEXISTENT ",
                           strlen("IMAP_MAILBOX_NONEXISTENT ")))
             return IMAP_MAILBOX_NONEXISTENT;
-        else if (!strncmp(errmsg.s, "IMAP_MAILBOX_LOCKED ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_MAILBOX_LOCKED ",
                           strlen("IMAP_MAILBOX_LOCKED ")))
             return IMAP_MAILBOX_LOCKED;
-        else if (!strncmp(errmsg.s, "IMAP_MAILBOX_MOVED ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_MAILBOX_MOVED ",
                           strlen("IMAP_MAILBOX_MOVED ")))
             return IMAP_MAILBOX_MOVED;
-        else if (!strncmp(errmsg.s, "IMAP_MAILBOX_NOTSUPPORTED ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_MAILBOX_NOTSUPPORTED ",
                           strlen("IMAP_MAILBOX_NOTSUPPORTED ")))
             return IMAP_MAILBOX_NOTSUPPORTED;
-        else if (!strncmp(errmsg.s, "IMAP_SYNC_CHECKSUM ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_SYNC_CHECKSUM ",
                           strlen("IMAP_SYNC_CHECKSUM ")))
             return IMAP_SYNC_CHECKSUM;
-        else if (!strncmp(errmsg.s, "IMAP_SYNC_CHANGED ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_SYNC_CHANGED ",
                           strlen("IMAP_SYNC_CHANGED ")))
             return IMAP_SYNC_CHANGED;
-        else if (!strncmp(errmsg.s, "IMAP_SYNC_BADSIEVE ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_SYNC_BADSIEVE ",
                           strlen("IMAP_SYNC_BADSIEVE ")))
             return IMAP_SYNC_BADSIEVE;
-        else if (!strncmp(errmsg.s, "IMAP_PROTOCOL_ERROR ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_PROTOCOL_ERROR ",
                           strlen("IMAP_PROTOCOL_ERROR ")))
             return IMAP_PROTOCOL_ERROR;
-        else if (!strncmp(errmsg.s, "IMAP_PROTOCOL_BAD_PARAMETERS ",
+        else if (!strncmp(buf_s(&errmsg), "IMAP_PROTOCOL_BAD_PARAMETERS ",
                           strlen("IMAP_PROTOCOL_BAD_PARAMETERS ")))
             return IMAP_PROTOCOL_BAD_PARAMETERS;
         else
@@ -2196,7 +2196,7 @@ int sync_parse_response(const char *cmd, struct protstream *in,
     sync_getline(in, &errmsg);
     xsyslog(LOG_ERR, "IOERROR: received bad response",
                      "command=<%s> response=<%s> errmsg=<%s>",
-                     cmd, response.s, errmsg.s);
+                     cmd, buf_s(&response), buf_s(&errmsg));
     return IMAP_PROTOCOL_ERROR;
 }
 
@@ -3106,7 +3106,7 @@ static int getannotation_cb(const char *mboxname,
     dlist_setatom(kl, "MBOXNAME", mboxname);
     dlist_setatom(kl, "ENTRY", entry);
     dlist_setatom(kl, "USERID", userid);
-    dlist_setmap(kl, "VALUE", value->s, value->len);
+    dlist_setmap(kl, "VALUE", buf_s(value), buf_len(value));
     sync_send_response(kl, pout);
     dlist_free(&kl);
 
@@ -4814,7 +4814,7 @@ static int folder_setannotation(struct sync_client_state *sync_cs,
     dlist_setatom(kl, "MBOXNAME", mboxname);
     dlist_setatom(kl, "ENTRY", entry);
     dlist_setatom(kl, "USERID", userid);
-    dlist_setmap(kl, "VALUE", value->s, value->len);
+    dlist_setmap(kl, "VALUE", buf_s(value), buf_len(value));
     sync_send_apply(kl, sync_cs->backend->out);
     dlist_free(&kl);
 

@@ -175,31 +175,31 @@ static void batch_commands(struct db *db)
             goto done;
         }
 
-        if (cmd.len) {
+        if (buf_len(&cmd)) {
             /* got a command! */
-            if (!strcmp(cmd.s, "BEGIN")) {
+            if (!strcmp(buf_s(&cmd), "BEGIN")) {
                 if (tidp) {
                     r = IMAP_MAILBOX_LOCKED;
                     goto done;
                 }
                 tidp = &tid;
             }
-            else if (!strcmp(cmd.s, "SHOW")) {
-                r = cyrusdb_foreach(db, key.s, key.len, NULL, aprinter_cb, out, tidp);
+            else if (!strcmp(buf_s(&cmd), "SHOW")) {
+                r = cyrusdb_foreach(db, buf_s(&key), buf_len(&key), NULL, aprinter_cb, out, tidp);
                 if (r) goto done;
                 prot_flush(out);
             }
-            else if (!strcmp(cmd.s, "SET")) {
-                r = cyrusdb_store(db, key.s, key.len, val.s, val.len, tidp);
+            else if (!strcmp(buf_s(&cmd), "SET")) {
+                r = cyrusdb_store(db, buf_s(&key), buf_len(&key), buf_s(&val), buf_len(&val), tidp);
                 if (r) goto done;
             }
-            else if (!strcmp(cmd.s, "GET")) {
+            else if (!strcmp(buf_s(&cmd), "GET")) {
                 const char *res;
                 size_t reslen;
-                r = cyrusdb_fetch(db, key.s, key.len, &res, &reslen, tidp);
+                r = cyrusdb_fetch(db, buf_s(&key), buf_len(&key), &res, &reslen, tidp);
                 switch (r) {
                 case 0:
-                    aprinter_cb(out, key.s, key.len, res, reslen);
+                    aprinter_cb(out, buf_s(&key), buf_len(&key), res, reslen);
                     prot_flush(out);
                     break;
                 case CYRUSDB_NOTFOUND:
@@ -209,11 +209,11 @@ static void batch_commands(struct db *db)
                     goto done;
                 }
             }
-            else if (!strcmp(cmd.s, "DELETE")) {
-                r = cyrusdb_delete(db, key.s, key.len, tidp, 1);
+            else if (!strcmp(buf_s(&cmd), "DELETE")) {
+                r = cyrusdb_delete(db, buf_s(&key), buf_len(&key), tidp, 1);
                 if (r) goto done;
             }
-            else if (!strcmp(cmd.s, "COMMIT")) {
+            else if (!strcmp(buf_s(&cmd), "COMMIT")) {
                 if (!tidp) {
                     r = IMAP_NOTFOUND;
                     goto done;
@@ -223,7 +223,7 @@ static void batch_commands(struct db *db)
                 tid = NULL;
                 tidp = NULL;
             }
-            else if (!strcmp(cmd.s, "ABORT")) {
+            else if (!strcmp(buf_s(&cmd), "ABORT")) {
                 if (!tidp) {
                     r = IMAP_NOTFOUND;
                     goto done;
@@ -244,7 +244,7 @@ done:
     if (r) {
         if (tid) cyrusdb_abort(db, tid);
         fprintf(stderr, "FAILED: line %d at cmd %.*s with error %s\n",
-                line, (int)cmd.len, cmd.s, error_message(r));
+                line, (int)buf_len(&cmd), buf_s(&cmd), error_message(r));
     }
 
     prot_free(in);

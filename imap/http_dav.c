@@ -2020,10 +2020,10 @@ int propfind_getlastmod(const xmlChar *name, xmlNsPtr ns,
     }
 
     buf_ensure(&fctx->buf, 30);
-    httpdate_gen(fctx->buf.s, fctx->buf.alloc, lastmod);
+    httpdate_gen(buf_s(&fctx->buf), buf_alloced(&fctx->buf), lastmod);
 
     xml_add_prop(HTTP_OK, fctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
-                 name, ns, BAD_CAST fctx->buf.s, 0);
+                 name, ns, BAD_CAST buf_s(&fctx->buf), 0);
 
     return 0;
 }
@@ -3451,7 +3451,7 @@ static int allprop_cb(const char *mailbox __attribute__((unused)),
 
     if (arock->fctx->mode == PROPFIND_ALL) {
         xmlAddChild(node, xmlNewCDataBlock(arock->fctx->root->doc,
-                                           BAD_CAST attrib->s, attrib->len));
+                                           BAD_CAST buf_s(attrib), buf_len(attrib)));
     }
 
     return 0;

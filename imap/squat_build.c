@@ -126,8 +126,8 @@ static int init_write_buffer(SquatWriteBuffer* b, int buf_size, int fd)
    Return a pointer to where the written data should be placed. */
 static char *prepare_buffered_write(SquatWriteBuffer *b, int len)
 {
-    if (b->buf.len + len >= b->buf.alloc) {
-        if (write(b->fd, b->buf.s, b->buf.len) != (long)b->buf.len) {
+    if (buf_len(&b->buf) + len >= buf_alloced(&b->buf)) {
+        if (write(b->fd, buf_s(&b->buf), buf_len(&b->buf)) != (long)buf_len(&b->buf)) {
             squat_set_last_error(SQUAT_ERR_SYSERR);
             return NULL;
         }
@@ -135,15 +135,15 @@ static char *prepare_buffered_write(SquatWriteBuffer *b, int len)
         buf_ensure(&b->buf, len);
     }
 
-    return b->buf.s + b->buf.len;
+    return buf_s(&b->buf) + buf_len(&b->buf);
 }
 
 /* Signal that data has been written up to the mark 'ptr'.
    Call this after prepare_buffered_write. */
 static void complete_buffered_write(SquatWriteBuffer *b, char *ptr)
 {
-    int oldbytes = b->buf.len;
-    int newbytes = ptr - b->buf.s;
+    int oldbytes = buf_len(&b->buf);
+    int newbytes = ptr - buf_s(&b->buf);
     buf_truncate(&b->buf, newbytes);
     b->total_output_bytes += newbytes - oldbytes;
 }
@@ -152,8 +152,8 @@ static void complete_buffered_write(SquatWriteBuffer *b, char *ptr)
    of the file. */
 static int flush_and_reset_buffered_writes(SquatWriteBuffer *b)
 {
-    if (b->buf.len) {
-        if (write(b->fd, b->buf.s, b->buf.len) != (long)b->buf.len) {
+    if (buf_len(&b->buf)) {
+        if (write(b->fd, buf_s(&b->buf), buf_len(&b->buf)) != (long)buf_len(&b->buf)) {
             squat_set_last_error(SQUAT_ERR_SYSERR);
             return SQUAT_ERR;
         }

@@ -593,8 +593,8 @@ static int smtpclient_data(smtpclient_t *sm, struct protstream *data)
             c = '.';
         }
         at_start = 0;
-        sm->buf.s[sm->buf.len++] = (unsigned char) c;
-        if (sm->buf.len == 4096) {
+        buf_putc(&sm->buf, c);
+        if (buf_len(&sm->buf) == 4096) {
             r = smtpclient_writebuf(sm, &sm->buf, 0);
             if (r) goto done;
             buf_reset(&sm->buf);

@@ -264,7 +264,7 @@ static int getmetadata(void *sc, const char *extname, const char *keyname, char 
     else {
         r = IMAP_MAILBOX_NONEXISTENT;
     }
-    *res = (r || !attrib.len) ? NULL : buf_release(&attrib);
+    *res = (r || !buf_len(&attrib)) ? NULL : buf_release(&attrib);
     free(intname);
     buf_free(&attrib);
     return r ? 0 : 1;
@@ -2052,7 +2052,7 @@ int run_sieve(const mbname_t *mbname, sieve_interp_t *interp, deliver_data_t *ms
     if (!mbname_userid(mbname)) {
         if (annotatemore_lookup(mbname_intname(mbname),
                                 IMAP_ANNOT_NS "sieve", "",
-                                &attrib) != 0 || !attrib.s) {
+                                &attrib) != 0 || !buf_s(&attrib)) {
             /* no sieve script annotation */
             return 1; /* do normal delivery actions */
         }

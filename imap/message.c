@@ -871,7 +871,7 @@ static int message_parse_headers(struct msg *msg, struct body *body,
             message_pendingboundary(next, len, boundaries)) {
             body->boundary_size = len;
             body->boundary_lines++;
-            if (next - 1 > headers.s) {
+            if (next - 1 > buf_s(&headers)) {
                 body->boundary_size += 2;
                 body->boundary_lines++;
                 next[-2] = '\0';
@@ -885,11 +885,11 @@ static int message_parse_headers(struct msg *msg, struct body *body,
     }
 
     body->content_offset = msg->offset;
-    body->header_size = strlen(headers.s+1);
+    body->header_size = strlen(buf_s(&headers)+1);
 
     /* Scan over the slurped-up headers for interesting header information */
     body->header_lines = -1;    /* Correct for leading newline */
-    for (next = headers.s; *next; next++) {
+    for (next = buf_s(&headers); *next; next++) {
         if (*next == '\n') {
             body->header_lines++;
 
@@ -911,7 +911,7 @@ static int message_parse_headers(struct msg *msg, struct body *body,
             }
 
             if (/* space preallocated, i.e. must be top-level body */
-                body->cacheheaders.s &&
+                buf_s(&body->cacheheaders) &&
                 /* this is not a continuation line */
                 (next[1] != ' ') && (next[1] != '\t') &&
                 /* this header is supposed to be cached */
@@ -954,7 +954,7 @@ static int message_parse_headers(struct msg *msg, struct body *body,
                     !strcmpsafe(body->encoding, "BINARY")) {
                     char *p = (char*)
                         stristr(msg->base + body->header_offset +
-                                (next - headers.s) + 27,
+                                (next - buf_s(&headers)) + 27,
                                 "binary");
                     memcpy(p, "base64", 6);
                 }
@@ -2041,7 +2041,7 @@ static char *message_getline(struct buf *buf, struct msg *msg)
 
     if (buf_len(buf) == oldlen)
         return 0;
-    return buf->s + oldlen;
+    return buf_s(buf) + oldlen;
 }
 
 
@@ -2455,9 +2455,9 @@ EXPORTED void message_write_xdrstring(struct buf *buf, const struct buf *s)
     /* 32b string length in network order */
     buf_appendbit32(buf, buf_len(s));
     /* bytes of string */
-    buf_appendmap(buf, s->s, s->len);
+    buf_appendmap(buf, buf_s(s), buf_len(s));
     /* 0 to 3 bytes padding */
-    padlen = (4 - (s->len & 3)) & 3;
+    padlen = (4 - (buf_len(s) & 3)) & 3;
     buf_appendmap(buf, "\0\0\0", padlen);
 }
 
@@ -2943,9 +2943,9 @@ static int message_read_nstring(struct protstream *strm, char **str, int copy)
     c = getnstring(strm, NULL, &buf);
 
     if (str) {
-        if (!buf.s) *str = NULL;
-        else if (copy) *str = xstrdup(buf.s);
-        else *str = buf.s;
+        if (!buf_s(&buf)) *str = NULL;
+        else if (copy) *str = xstrdup(buf_s(&buf));
+        else *str = buf_s(&buf);
     }
 
     return c;
@@ -3003,7 +3003,7 @@ static int message_read_addrpart(struct protstream *strm,
 
     c = message_read_nstring(strm, (char **)part, 0);
     if (*part) {
-        *off = buf->len;
+        *off = buf_len(buf);
         buf_appendmap(buf, *part, strlen(*part)+1);
     }
 
@@ -3043,7 +3043,7 @@ static int message_read_address(struct protstream *strm, struct address **addrp)
             c = message_read_addrpart(strm, &addr->domain, &domoff, &buf);
 
             /* addr parts must now point into our freeme string */
-            if (buf.len) {
+            if (buf_len(&buf)) {
                 char *freeme = addr->freeme = buf_release(&buf);
 
                 if (addr->name) addr->name = freeme+nameoff;
@@ -3441,12 +3441,12 @@ static void de_nstring_buf(struct buf *src, struct buf *dst)
 {
     char *p, *q;
 
-    if (src->s && src->len == 3 && !memcmp(src->s, "NIL", 3)) {
+    if (buf_s(src) && buf_len(src) == 3 && !memcmp(buf_s(src), "NIL", 3)) {
         buf_free(dst);
         return;
     }
     buf_cstring(src); /* ensure nstring parse doesn't overrun */
-    q = src->s;
+    q = buf_s(src);
     p = parse_nstring(&q);
     buf_setmap(dst, p, q-p);
     buf_cstring(dst);
@@ -3904,7 +3904,7 @@ EXPORTED int message_update_conversations(struct conversations_state *state,
             struct buf annotval = BUF_INITIALIZER;
             buf_printf(&annotkey, "%snewcid/%016llx", IMAP_ANNOT_NS, record->cid);
             r = annotatemore_lookup(state->annotmboxname, buf_cstring(&annotkey), "", &annotval);
-            if (annotval.len == 16) {
+            if (buf_len(&annotval) == 16) {
                 const char *p = buf_cstring(&annotval);
                 /* we have a new canonical CID */
                 record->basecid = record->cid;
@@ -4239,7 +4239,7 @@ static int message_need(const message_t *cm, unsigned int need)
         r = message_need(m, M_MAP);
         if (r) return r;
         m->body = (struct body *)xzmalloc(sizeof(struct body));
-        r = message_parse_mapped(m->map.s, m->map.len, m->body, NULL);
+        r = message_parse_mapped(buf_s(&m->map), buf_len(&m->map), m->body, NULL);
         if (r) return r;
         found(M_CACHEBODY|M_FULLBODY);
     }
@@ -4321,9 +4321,9 @@ static int skip_nil_or_nstring_list(struct protstream *prot)
                 prot_ungetc(c, prot);
                 c = getnstring(prot, NULL, &word);
 #if DEBUG
-                if (word.len)
+                if (buf_len(&word))
                     fprintf(stderr, "%sskipping string \"%s\" at %d\n",
-                            indent(depth), word.s, treedepth);
+                            indent(depth), buf_s(&word), treedepth);
 #endif
             }
             if (c == '(')
@@ -4342,7 +4342,7 @@ static int skip_nil_or_nstring_list(struct protstream *prot)
     else {
         prot_ungetc(c, prot);
         c = getnstring(prot, NULL, &word);
-        if (c == ' ' && !word.len) {
+        if (c == ' ' && !buf_len(&word)) {
             /* 'NIL' */
 #if DEBUG
             fprintf(stderr, "%sskipping NIL\n", indent(depth));
@@ -4899,7 +4899,7 @@ static int body_foreach_section(struct body *body, struct message *message,
             strarray_t boundaries = STRARRAY_INITIALIZER;
             struct msg msg;
 
-            msg.base = message->map.s + body->header_offset;
+            msg.base = buf_s(&message->map) + body->header_offset;
             msg.len = body->header_size;
             msg.offset = 0;
             msg.encode = 0;
@@ -4909,7 +4909,7 @@ static int body_foreach_section(struct body *body, struct message *message,
             disposition_params = tmpbody->disposition_params;
         }
 
-        buf_init_ro(&data, message->map.s + body->header_offset, body->header_size);
+        buf_init_ro(&data, buf_s(&message->map) + body->header_offset, body->header_size);
         r = proc(/*isbody*/0, CHARSET_UNKNOWN_CHARSET, 0, body->type, body->subtype,
                  body->params, disposition, disposition_params, &body->content_guid,
                  body->part_id, &data, rock);
@@ -4927,7 +4927,7 @@ static int body_foreach_section(struct body *body, struct message *message,
         int encoding;
         charset_t charset = CHARSET_UNKNOWN_CHARSET;
         message_parse_charset(body, &encoding, &charset);
-        buf_init_ro(&data, message->map.s + body->content_offset, body->content_size);
+        buf_init_ro(&data, buf_s(&message->map) + body->content_offset, body->content_size);
         r = proc(/*isbody*/1, charset, encoding, body->type, body->subtype,
                  body->params, NULL, NULL, &body->content_guid, body->part_id,
                  &data, rock);
@@ -4935,7 +4935,7 @@ static int body_foreach_section(struct body *body, struct message *message,
         charset_free(&charset);
         if (r) return r;
     } else {
-        buf_init_ro(&data, message->map.s + body->content_offset, body->content_size);
+        buf_init_ro(&data, buf_s(&message->map) + body->content_offset, body->content_size);
         r = proc(/*isbody*/1, CHARSET_UNKNOWN_CHARSET, encoding_lookupname(body->encoding),
                  body->type, body->subtype, body->params, NULL, NULL,
                  &body->content_guid, body->part_id, &data, rock);
@@ -5273,19 +5273,19 @@ static void extract_one(struct buf *buf,
 {
     char *p = NULL;
 
-    if (raw->len && (flags & MESSAGE_LAST)) {
+    if (buf_len(raw) && (flags & MESSAGE_LAST)) {
         /* Skip all but the last header value */
-        const char *q = raw->s;
-        const char *last = raw->s;
-        while ((p = strnchr(q, '\r', raw->s + raw->len - q))) {
-            if (p >= raw->s + raw->len - 2)
+        const char *q = buf_s(raw);
+        const char *last = buf_s(raw);
+        while ((p = strnchr(q, '\r', buf_s(raw) + buf_len(raw) - q))) {
+            if (p >= buf_s(raw) + buf_len(raw) - 2)
                 break;
             if (*(p+1) == '\n' && *(p+2) && !isspace(*(p+2)))
                 last = p + 2;
             q = p + 1;
         }
-        if (last != raw->s)
-            buf_remove(raw, 0, last - raw->s);
+        if (last != buf_s(raw))
+            buf_remove(raw, 0, last - buf_s(raw));
         p = NULL;
     }
 
@@ -5308,8 +5308,8 @@ static void extract_one(struct buf *buf,
          * by setting it up as a CoW buffer.  This means that
          * the caller will need to call buf_cstring() if they
          * need a C string. */
-        if (!raw->alloc)
-            buf_cowappendmap(buf, raw->s, raw->len);
+        if (!buf_alloced(raw))
+            buf_cowappendmap(buf, buf_s(raw), buf_len(raw));
         else
             buf_append(buf, raw);
         break;
@@ -5382,7 +5382,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
             }
         }
         if (!r) {
-            buf_setmap(buf, m->map.s, header_size);
+            buf_setmap(buf, buf_s(&m->map), header_size);
         }
         return r;
     }
@@ -5390,7 +5390,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
     if (!strcasecmp(hdr, "rawbody")) {
         int r = message_need(m, M_MAP|M_RECORD);
         if (r) return r;
-        buf_setmap(buf, m->map.s + m->record.header_size, m->record.size - m->record.header_size);
+        buf_setmap(buf, buf_s(&m->map) + m->record.header_size, m->record.size - m->record.header_size);
         return 0;
     }
 
@@ -5406,7 +5406,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         if (!r) {
             buf_setmap(&raw, cacheitem_base(&m->record, CACHE_FROM),
                     cacheitem_size(&m->record, CACHE_FROM));
-            if (raw.len == 3 && raw.s[0] == 'N' && raw.s[1] == 'I' && raw.s[2] == 'L')
+            if (buf_len(&raw) == 3 && buf_s(&raw)[0] == 'N' && buf_s(&raw)[1] == 'I' && buf_s(&raw)[2] == 'L')
                 buf_reset(&raw);
             hasname = 0;
             isutf8 = 1;
@@ -5418,7 +5418,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         if (!r) {
             buf_setmap(&raw, cacheitem_base(&m->record, CACHE_TO),
                     cacheitem_size(&m->record, CACHE_TO));
-            if (raw.len == 3 && raw.s[0] == 'N' && raw.s[1] == 'I' && raw.s[2] == 'L')
+            if (buf_len(&raw) == 3 && buf_s(&raw)[0] == 'N' && buf_s(&raw)[1] == 'I' && buf_s(&raw)[2] == 'L')
                 buf_reset(&raw);
             hasname = 0;
             isutf8 = 1;
@@ -5430,7 +5430,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         if (!r) {
             buf_setmap(&raw, cacheitem_base(&m->record, CACHE_CC),
                     cacheitem_size(&m->record, CACHE_CC));
-            if (raw.len == 3 && raw.s[0] == 'N' && raw.s[1] == 'I' && raw.s[2] == 'L')
+            if (buf_len(&raw) == 3 && buf_s(&raw)[0] == 'N' && buf_s(&raw)[1] == 'I' && buf_s(&raw)[2] == 'L')
                 buf_reset(&raw);
             hasname = 0;
             isutf8 = 1;
@@ -5442,7 +5442,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         if (!r) {
             buf_setmap(&raw, cacheitem_base(&m->record, CACHE_BCC),
                     cacheitem_size(&m->record, CACHE_BCC));
-            if (raw.len == 3 && raw.s[0] == 'N' && raw.s[1] == 'I' && raw.s[2] == 'L')
+            if (buf_len(&raw) == 3 && buf_s(&raw)[0] == 'N' && buf_s(&raw)[1] == 'I' && buf_s(&raw)[2] == 'L')
                 buf_reset(&raw);
             hasname = 0;
             isutf8 = 1;
@@ -5471,7 +5471,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
             if (envtokens[ENV_MSGID])
                 buf_appendcstr(&raw, envtokens[ENV_MSGID]);
             free(c_env);
-            if (raw.len == 3 && raw.s[0] == 'N' && raw.s[1] == 'I' && raw.s[2] == 'L')
+            if (buf_len(&raw) == 3 && buf_s(&raw)[0] == 'N' && buf_s(&raw)[1] == 'I' && buf_s(&raw)[2] == 'L')
                 buf_reset(&raw);
             hasname = 0;
             found_field = 1;
@@ -5501,7 +5501,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         char *headers = NULL;
         int r = message_need(m, M_MAP|M_CACHEBODY);
         if (r) return r;
-        headers = xstrndup(m->map.s + m->body->header_offset, m->body->header_size);
+        headers = xstrndup(buf_s(&m->map) + m->body->header_offset, m->body->header_size);
         strarray_append(&want, hdr);
         message_pruneheader(headers, &want, NULL);
         buf_appendcstr(&raw, headers);
@@ -5510,7 +5510,7 @@ EXPORTED int message_get_field(message_t *m, const char *hdr, int flags, struct 
         found_field = 1;
     }
 
-    if (raw.len)
+    if (buf_len(&raw))
         extract_one(buf, hdr, flags, hasname, isutf8, &raw);
 
     buf_free(&raw);

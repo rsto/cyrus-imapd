@@ -97,7 +97,7 @@ static char *proc_getpath(pid_t pid, int isnew)
 
         buf_setcstr(&buf, procpath);
 
-        if (buf.s[buf.len-1] != '/')
+        if (buf_s(&buf)[buf_len(&buf)-1] != '/')
             buf_putc(&buf, '/');
     }
     else {

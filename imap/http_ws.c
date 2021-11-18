@@ -367,8 +367,8 @@ static int zlib_decompress(struct transaction_t *txn,
 
         buf_ensure(&txn->zbuf, 4096);
 
-        zstrm->next_out = (Bytef *) txn->zbuf.s + txn->zbuf.len;
-        zstrm->avail_out = txn->zbuf.alloc - txn->zbuf.len;
+        zstrm->next_out = (Bytef *) buf_s(&txn->zbuf) + buf_len(&txn->zbuf);
+        zstrm->avail_out = buf_alloced(&txn->zbuf) - buf_len(&txn->zbuf);
 
         zr = inflate(zstrm, Z_SYNC_FLUSH);
         if (!(zr == Z_OK || zr == Z_STREAM_END || zr == Z_BUF_ERROR)) {
@@ -378,7 +378,7 @@ static int zlib_decompress(struct transaction_t *txn,
             return -1;
         }
 
-        txn->zbuf.len = txn->zbuf.alloc - zstrm->avail_out;
+        buf_truncate(&txn->zbuf, buf_alloced(&txn->zbuf) - zstrm->avail_out);
 
     } while (!zstrm->avail_out);
 

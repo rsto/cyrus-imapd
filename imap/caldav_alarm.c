@@ -319,7 +319,7 @@ static int send_alarm(struct get_alarm_rock *rock,
     /* get the display name annotation */
     const char *displayname_annot = DAV_ANNOT_NS "<" XML_NS_DAV ">displayname";
     annotatemore_lookupmask(rock->mboxname, displayname_annot, userid, &calname);
-    if (!calname.len) buf_setcstr(&calname, calid);
+    if (!buf_len(&calname)) buf_setcstr(&calname, calid);
 
     /* get the calendar color annotation */
     const char *color_annot = DAV_ANNOT_NS "<" XML_NS_APPLE ">calendar-color";
@@ -735,7 +735,7 @@ static int read_lastalarm(struct mailbox *mailbox,
     annotatemore_msg_lookup(mailbox, record->uid,
                             annotname, "", &annot_buf);
 
-    if (annot_buf.len &&
+    if (buf_len(&annot_buf) &&
         sscanf(buf_cstring(&annot_buf), TIME_T_FMT " " TIME_T_FMT,
                &data->lastrun, &data->nextcheck) == 2) {
         r = 0;

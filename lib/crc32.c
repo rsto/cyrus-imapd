@@ -785,7 +785,7 @@ EXPORTED uint32_t crc32_iovec(struct iovec *iov, int iovcnt)
 
 EXPORTED uint32_t crc32_buf(const struct buf *buf)
 {
-    return crc32_map(buf->s, buf->len);
+    return crc32_map(buf_s(buf), buf_len(buf));
 }
 
 EXPORTED uint32_t crc32_cstring(const char *buf)

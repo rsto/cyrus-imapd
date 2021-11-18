@@ -1268,7 +1268,7 @@ EXPORTED int prot_write(struct protstream *s, const char *buf, unsigned len)
 
 EXPORTED int prot_putbuf(struct protstream *s, const struct buf *buf)
 {
-    return prot_write(s, buf->s, buf->len);
+    return prot_write(s, buf_s(buf), buf_len(buf));
 }
 
 EXPORTED int prot_puts(struct protstream *s, const char *str)
@@ -1461,8 +1461,8 @@ EXPORTED int prot_read(struct protstream *s, char *buf, unsigned size)
 EXPORTED int prot_readbuf(struct protstream *s, struct buf *buf, unsigned size)
 {
     buf_ensure(buf, size);
-    size = prot_read(s, buf->s + buf->len, size);
-    buf->len += size;
+    size = prot_read(s, buf_s(buf) + buf_len(buf), size);
+    buf_truncate(buf, buf_len(buf) + size);
     return size;
 }
 

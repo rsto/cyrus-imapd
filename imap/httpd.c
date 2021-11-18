@@ -172,8 +172,8 @@ HIDDEN int zlib_compress(struct transaction_t *txn, unsigned flags,
     do {
         int zr;
 
-        zstrm->next_out = (Bytef *) txn->zbuf.s + txn->zbuf.len;
-        zstrm->avail_out = txn->zbuf.alloc - txn->zbuf.len;
+        zstrm->next_out = (Bytef *) buf_s(&txn->zbuf) + buf_len(&txn->zbuf);
+        zstrm->avail_out = buf_alloced(&txn->zbuf) - buf_len(&txn->zbuf);
 
         zr = deflate(zstrm, flush);
         if (!(zr == Z_OK || zr == Z_STREAM_END || zr == Z_BUF_ERROR)) {
@@ -182,7 +182,7 @@ HIDDEN int zlib_compress(struct transaction_t *txn, unsigned flags,
             return -1;
         }
 
-        txn->zbuf.len = txn->zbuf.alloc - zstrm->avail_out;
+        buf_truncate(&txn->zbuf, buf_alloced(&txn->zbuf) - zstrm->avail_out);
 
         if (zstrm->avail_out) {
             pending = 0;
@@ -279,8 +279,8 @@ static int brotli_compress(struct transaction_t *txn,
     buf_ensure(&txn->zbuf, BrotliEncoderMaxCompressedSize(avail_in));
 
     do {
-        uint8_t *next_out = (uint8_t *) txn->zbuf.s + txn->zbuf.len;
-        size_t avail_out = txn->zbuf.alloc - txn->zbuf.len;
+        uint8_t *next_out = (uint8_t *) buf_s(&txn->zbuf) + txn->zbuf.len;
+        size_t avail_out = buf_alloced(&txn->zbuf) - txn->zbuf.len;
 
         if (!BrotliEncoderCompressStream(brotli, op,
                                          &avail_in, &next_in,
@@ -289,7 +289,7 @@ static int brotli_compress(struct transaction_t *txn,
             return -1;
         }
 
-        txn->zbuf.len = txn->zbuf.alloc - avail_out;
+        txn->zbuf.len = buf_alloced(&txn->zbuf) - avail_out;
     } while (avail_in || BrotliEncoderHasMoreOutput(brotli));
 
     if (BrotliEncoderIsFinished(brotli)) {
@@ -358,7 +358,7 @@ static int zstd_compress(struct transaction_t *txn,
     buf_reset(&txn->zbuf);
     buf_ensure(&txn->zbuf, ZSTD_compressBound(len));
 
-    ZSTD_outBuffer output = { txn->zbuf.s, txn->zbuf.alloc, 0 };
+    ZSTD_outBuffer output = { buf_s(&txn->zbuf), buf_alloced(&txn->zbuf), 0 };
     do {
         remaining = ZSTD_compressStream2(cctx, &output, &input, mode);
 
@@ -2163,10 +2163,10 @@ static void cmdloop(struct http_connection *conn)
             libcyrus_run_delayed();
 
             /* Check for shutdown file */
-            if (shutdown_file(txn.buf.s, txn.buf.alloc) ||
+            if (shutdown_file(buf_s(&txn.buf), buf_alloced(&txn.buf)) ||
                 (httpd_userid &&
-                 userdeny(httpd_userid, config_ident, txn.buf.s, txn.buf.alloc))) {
-                conn->close_str = txn.buf.s;
+                 userdeny(httpd_userid, config_ident, buf_s(&txn.buf), buf_alloced(&txn.buf)))) {
+                conn->close_str = buf_s(&txn.buf);
                 conn->close = 1;
                 ret = HTTP_SHUTDOWN;
                 break;
@@ -2510,7 +2510,7 @@ void parse_query_params(struct transaction_t *txn, const char *query)
         buf_ensure(&txn->buf, len+1);
 
         vals = hash_lookup(key, &txn->req_qparams);
-        appendstrlist(&vals, xmlURIUnescapeString(value, len, txn->buf.s));
+        appendstrlist(&vals, xmlURIUnescapeString(value, len, buf_s(&txn->buf)));
         hash_insert(key, vals, &txn->req_qparams);
     }
     tok_fini(&tok);
@@ -3551,8 +3551,8 @@ EXPORTED void write_body(long code, struct transaction_t *txn,
             fatal("Error while compressing data", EX_SOFTWARE);
         }
 
-        buf = txn->zbuf.s;
-        outlen = txn->zbuf.len;
+        buf = buf_s(&txn->zbuf);
+        outlen = buf_len(&txn->zbuf);
     }
 
     if (code) {

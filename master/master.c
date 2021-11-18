@@ -2458,7 +2458,7 @@ static void init_prom_report(struct timeval now)
     if ((tmp = config_getstring(IMAPOPT_PROMETHEUS_STATS_DIR))) {
         if (tmp[0] == '/' && tmp[1] != '\0') {
             buf_setcstr(&buf, tmp);
-            if (buf.s[buf.len-1] != '/')
+            if (buf_s(&buf)[buf_len(&buf)-1] != '/')
                 buf_putc(&buf, '/');
             buf_appendcstr(&buf, FNAME_PROM_MASTER_REPORT);
         }

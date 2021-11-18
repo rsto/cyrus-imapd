@@ -808,7 +808,7 @@ static char *_emailbodies_to_plain(struct emailbodies *bodies, const struct buf 
         int is_encoding_problem = 0;
         struct body *textbody = ptrarray_nth(&bodies->textlist, 0);
         char *text = _decode_to_utf8(textbody->charset_id,
-                                     msg_buf->s + textbody->content_offset,
+                                     buf_s(msg_buf) + textbody->content_offset,
                                      textbody->content_size,
                                      textbody->encoding,
                                      &is_encoding_problem);
@@ -827,7 +827,7 @@ static char *_emailbodies_to_plain(struct emailbodies *bodies, const struct buf 
         if (!strcmp(part->type, "TEXT")) {
             int is_encoding_problem = 0;
             char *t = _decode_to_utf8(part->charset_id,
-                                      msg_buf->s + part->content_offset,
+                                      buf_s(msg_buf) + part->content_offset,
                                       part->content_size,
                                       part->encoding,
                                       &is_encoding_problem);
@@ -902,7 +902,7 @@ static char *_emailbodies_to_html(struct emailbodies *bodies, const struct buf *
         const struct body *part = ptrarray_nth(&bodies->htmllist, 0);
         int is_encoding_problem = 0;
         char *html = _decode_to_utf8(part->charset_id,
-                                     msg_buf->s + part->content_offset,
+                                     buf_s(msg_buf) + part->content_offset,
                                      part->content_size,
                                      part->encoding,
                                      &is_encoding_problem);
@@ -931,7 +931,7 @@ static char *_emailbodies_to_html(struct emailbodies *bodies, const struct buf *
 
         int is_encoding_problem = 0;
         char *t = _decode_to_utf8(part->charset_id,
-                                  msg_buf->s + part->content_offset,
+                                  buf_s(msg_buf) + part->content_offset,
                                   part->content_size,
                                   part->encoding,
                                   &is_encoding_problem);
@@ -6284,7 +6284,7 @@ static int _cyrusmsg_get_headers(struct cyrusmsg *msg,
 
     struct headers *headers = xmalloc(sizeof(struct headers));
     _headers_init(headers);
-    _headers_from_mime(msg->mime->s + header_part->header_offset,
+    _headers_from_mime(buf_s(msg->mime) + header_part->header_offset,
                        header_part->header_size, headers);
 
     if (part && part->part_id)
@@ -6777,7 +6777,7 @@ static json_t *_email_get_bodypart(jmap_req_t *req,
                 size_t tmp_size;
                 int r = _cyrusmsg_need_mime(msg);
                 if (!r)  {
-                    charset_decode_mimebody(msg->mime->s + part->content_offset,
+                    charset_decode_mimebody(buf_s(msg->mime) + part->content_offset,
                             part->content_size, part->charset_enc, &tmp, &tmp_size);
                     size = tmp_size;
                     free(tmp);
@@ -7021,7 +7021,7 @@ static json_t * _email_get_bodyvalue(struct body *part,
 
     /* Decode into UTF-8 buffer */
     char *raw = _decode_to_utf8(part->charset_id,
-            msg_buf->s + part->content_offset,
+            buf_s(msg_buf) + part->content_offset,
             part->content_size, part->encoding,
             &is_encoding_problem);
     if (!raw) goto done;
@@ -7246,7 +7246,7 @@ static int _email_get_bodies(jmap_req_t *req,
             if (r) goto done;
             char *decbuf = NULL;
             size_t declen = 0;
-            const char *rawical = charset_decode_mimebody(msg->mime->s + part->content_offset,
+            const char *rawical = charset_decode_mimebody(buf_s(msg->mime) + part->content_offset,
                     part->content_size, part->charset_enc, &decbuf, &declen);
             if (!rawical) continue;
             struct buf buf = BUF_INITIALIZER;
@@ -8285,7 +8285,7 @@ static void _email_append(jmap_req_t *req,
             struct buf buf = BUF_INITIALIZER;
             annotatemore_lookup(mbname_intname(mbname), "/specialuse",
                                 req->accountid, &buf);
-            if (buf.len) {
+            if (buf_len(&buf)) {
                 strarray_t *uses = strarray_split(buf_cstring(&buf), " ", STRARRAY_TRIM);
                 if (strarray_find_case(uses, "\\Drafts", 0)) {
                     if (mboxname) free(mboxname);
@@ -10071,7 +10071,7 @@ static void _emailpart_text_to_mime(FILE *fp, struct emailpart *part)
     if (!is_7bit || has_long_lines) {
         /* Write quoted printable */
         size_t qp_len = 0;
-        char *qp_text = charset_qpencode_mimebody(txtbuf.s, txtbuf.len, 1, &qp_len);
+        char *qp_text = charset_qpencode_mimebody(buf_s(&txtbuf), buf_len(&txtbuf), 1, &qp_len);
         fputs("Content-Transfer-Encoding: quoted-printable\r\n", fp);
         fputs("\r\n", fp);
         fwrite(qp_text, 1, qp_len, fp);
@@ -12583,8 +12583,8 @@ static int _email_import_cb(jmap_req_t *req __attribute__((unused)),
                             json_t **err __attribute__((unused)))
 {
     struct _email_import_rock *data = (struct _email_import_rock*) rock;
-    const char *base = data->buf.s;
-    size_t len = data->buf.len;
+    const char *base = buf_s(&data->buf);
+    size_t len = buf_len(&data->buf);
     struct protstream *stream = prot_readmap(base, len);
     int r = message_copy_strict(stream, out, len, 0);
     prot_free(stream);

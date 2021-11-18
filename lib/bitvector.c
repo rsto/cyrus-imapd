@@ -288,7 +288,7 @@ EXPORTED char *bv_cstring(const bitvector_t *bv)
 
     if (bv->length) {
         buf_truncate(&buf, vlen(bv->length)*2);
-        bin_to_hex(bv_bits(bv), vlen(bv->length), buf.s, 0);
+        bin_to_hex(bv_bits(bv), vlen(bv->length), buf_s(&buf), 0);
     }
 
     buf_putc(&buf, '[');

@@ -100,7 +100,7 @@ extern int mappedfile_rename(struct mappedfile *mf, const char *newname);
 #define mappedfile_isreadlocked(mf) ((mf)->lock_status == MF_READLOCKED)
 #define mappedfile_iswritelocked(mf) ((mf)->lock_status == MF_WRITELOCKED)
 #define mappedfile_iswritable(mf) (!!(mf)->is_rw)
-#define mappedfile_base(mf) ((const char *)((mf)->map_buf.s))
+#define mappedfile_base(mf) ((const char *)(buf_s(&((mf)->map_buf))))
 #define mappedfile_size(mf) ((mf)->map_size)
 #define mappedfile_buf(mf) ((const struct buf *)(&((mf)->map_buf)))
 #define mappedfile_fname(mf) ((const char *)((mf)->fname))

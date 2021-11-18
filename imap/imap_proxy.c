@@ -583,7 +583,7 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
             goto out;
         }
 
-        if(!strncmp(tag, tagb.s, taglen)) {
+        if(!strncmp(tag, buf_s(&tagb), taglen)) {
             char buf[2048];
             if(!prot_fgets(buf, sizeof(buf), s->in)) {
                 if(s == backend_current && !force_notfatal)
@@ -628,13 +628,13 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
             goto out;
         }
 
-        if(strncasecmp("LSUB", cmd.s, 4) && strncasecmp("LIST", cmd.s, 4)) {
-            if (suppress_resp && is_extended_resp(cmd.s, listargs)) {
+        if(strncasecmp("LSUB", buf_s(&cmd), 4) && strncasecmp("LIST", buf_s(&cmd), 4)) {
+            if (suppress_resp && is_extended_resp(buf_s(&cmd), listargs)) {
                 /* suppress extended return data for this mailbox */
                 eatline(s->in, c);
             }
             else {
-                prot_printf(imapd_out, "%s %s ", tagb.s, cmd.s);
+                prot_printf(imapd_out, "%s %s ", buf_s(&tagb), buf_s(&cmd));
                 r = pipe_to_end_of_response(s, force_notfatal);
                 if (r != PROXY_OK)
                     goto out;
@@ -651,12 +651,12 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
                 do {
                     c = getword(s->in, &name);
                     for (attr = mbox_name_attributes;
-                         attr->id && strcasecmp(name.s, attr->id); attr++);
+                         attr->id && strcasecmp(buf_s(&name), attr->id); attr++);
 
                     if (attr->id) attributes |= attr->flag;
                     else {
                         if (buf_len(&extraflags)) buf_putc(&extraflags, ' ');
-                        buf_appendcstr(&extraflags, name.s);
+                        buf_appendcstr(&extraflags, buf_s(&name));
                     }
                 } while (c == ' ');
 
@@ -716,7 +716,7 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
             /* lookup name */
             exist_r = 1;
             char *intname =
-                mboxname_from_external(name.s, &imapd_namespace, userid);
+                mboxname_from_external(buf_s(&name), &imapd_namespace, userid);
             mbentry_t *mbentry = NULL;
             exist_r = mboxlist_lookup(intname, &mbentry, NULL);
             free(intname);
@@ -758,7 +758,7 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
 
             if (!suppress_resp) {
                 /* send response to the client */
-                print_listresponse(listargs->cmd, name.s, sep.s[0],
+                print_listresponse(listargs->cmd, buf_s(&name), buf_s(&sep)[0],
                                    attributes, &extraflags);
 
                 /* send any PROXY_ONLY metadata items */
@@ -768,7 +768,7 @@ int pipe_lsub(struct backend *s, const char *userid, const char *tag,
                     if (mbentry &&
                         !strcmp(entry, "/shared" IMAP_ANNOT_NS "server")) {
                         prot_puts(imapd_out, "* METADATA ");
-                        prot_printastring(imapd_out, name.s);
+                        prot_printastring(imapd_out, buf_s(&name));
                         prot_puts(imapd_out, " (");
                         prot_printstring(imapd_out, entry);
                         prot_puts(imapd_out, " ");
@@ -1167,7 +1167,7 @@ void proxy_copy(const char *tag, char *sequence, char *name, int myrights,
 
         if (res == PROXY_OK) {
             if (myrights & ACL_READ) {
-                appenduid = strchr(s->last_result.s, '[');
+                appenduid = strchr(buf_s(&s->last_result), '[');
                 /* skip over APPENDUID */
                 if (appenduid) {
                     appenduid += strlen("[appenduid ");
@@ -1177,14 +1177,14 @@ void proxy_copy(const char *tag, char *sequence, char *name, int myrights,
                                 appenduid, error_message(IMAP_OK_COMPLETED));
                 }
                 else
-                    prot_printf(imapd_out, "%s OK %s\r\n", tag, s->last_result.s);
+                    prot_printf(imapd_out, "%s OK %s\r\n", tag, buf_s(&s->last_result));
             }
             else {
                 prot_printf(imapd_out, "%s OK %s\r\n", tag,
                             error_message(IMAP_OK_COMPLETED));
             }
         } else {
-            prot_printf(imapd_out, "%s %s", tag, s->last_result.s);
+            prot_printf(imapd_out, "%s %s", tag, buf_s(&s->last_result));
         }
     } else {
         /* abort the append */
@@ -1489,9 +1489,9 @@ int annotate_store_proxy(const char *server, const char *mbox_pat,
             buf_appendcstr(&entrybuf, e->entry);
 
             /* Print the entry-value pair */
-            prot_printamap(be->out, entrybuf.s, entrybuf.len);
+            prot_printamap(be->out, buf_s(&entrybuf), buf_len(&entrybuf));
             prot_putc(' ', be->out);
-            prot_printamap(be->out, av->value.s, av->value.len);
+            prot_printamap(be->out, buf_s(&av->value), buf_len(&av->value));
 
             if (av->next) prot_putc(' ', be->out);
         }

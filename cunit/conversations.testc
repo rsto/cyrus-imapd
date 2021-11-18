@@ -1318,8 +1318,8 @@ static void test_dump(void)
  \
         buf_appendcstr(&b, _in); \
         conversation_normalise_subject(&b); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
  \
         buf_free(&b); \
     }

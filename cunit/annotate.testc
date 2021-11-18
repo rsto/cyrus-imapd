@@ -79,7 +79,7 @@ static void fetch_cb(const char *mboxname, uint32_t uid,
 
     for ( ; avlist ; avlist = avlist->next) {
         buf_printf(&buf, " %s=", avlist->attrib);
-        if (avlist->value.s)
+        if (buf_len(&avlist->value))
             buf_printf(&buf, "\"%s\"", buf_cstring(&avlist->value));
         else
             buf_printf(&buf, "NIL");
@@ -135,7 +135,7 @@ static void test_getset_server_shared(void)
 
     r = annotatemore_lookup(/*mboxname*/"", COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* set a value */
 
@@ -165,7 +165,7 @@ static void test_getset_server_shared(void)
 
     r = annotatemore_lookup(/*mboxname*/"", COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -194,7 +194,7 @@ static void test_getset_server_shared(void)
 
     r = annotatemore_lookup(/*mboxname*/"", COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -226,7 +226,7 @@ static void test_getset_server_shared(void)
 
     r = annotatemore_lookup(/*mboxname*/"", COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -267,7 +267,7 @@ static void test_getset_server_shared(void)
 
     r = annotatemore_lookup(/*mboxname*/"", COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
 
     annotate_state_abort(&astate);
@@ -324,7 +324,7 @@ static void test_getset_mailbox_shared(void)
 
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* set a value */
     buf_appendcstr(&val, VALUE0);
@@ -351,7 +351,7 @@ static void test_getset_mailbox_shared(void)
 
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -380,7 +380,7 @@ static void test_getset_mailbox_shared(void)
 
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -412,7 +412,7 @@ static void test_getset_mailbox_shared(void)
 
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -451,7 +451,7 @@ static void test_getset_mailbox_shared(void)
     buf_free(&val);
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     annotate_state_abort(&astate);
     annotatemore_close();
@@ -508,7 +508,7 @@ static void test_getset_message_shared(void)
 
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* set a value */
 
@@ -536,7 +536,7 @@ static void test_getset_message_shared(void)
 
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -567,7 +567,7 @@ static void test_getset_message_shared(void)
 
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -603,7 +603,7 @@ static void test_getset_message_shared(void)
 
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -644,7 +644,7 @@ static void test_getset_message_shared(void)
     buf_free(&val);
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     r = mailbox_commit(mailbox);
     CU_ASSERT_EQUAL(r, 0);
@@ -734,19 +734,19 @@ static void test_delete(void)
 
     r = annotatemore_msg_lookup(mailbox, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE1);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE2);
     buf_free(&val2);
 
@@ -832,19 +832,19 @@ static void test_rename(void)
 
     r = annotatemore_msg_lookup(mailbox1, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox1, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE1);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox1, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE2);
     buf_free(&val2);
 
@@ -874,36 +874,36 @@ static void test_rename(void)
 
     r = annotatemore_lookup(MBOXNAME1_INT, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox1, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox1, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
     buf_free(&val2);
 
     /* check that the values are present under the new name */
 
     r = annotatemore_msg_lookup(mailbox3, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox3, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE1);
     buf_free(&val2);
 
     r = annotatemore_msg_lookup(mailbox3, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE2);
     buf_free(&val2);
 
@@ -947,17 +947,17 @@ static void test_abort(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(NULL, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox, 42, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     /* set a per-server value */
 
@@ -980,7 +980,7 @@ static void test_abort(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(NULL, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     /* set a per-mailbox value */
 
@@ -1003,12 +1003,12 @@ static void test_abort(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(NULL, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     /* set a per-message value */
 
@@ -1031,17 +1031,17 @@ static void test_abort(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(NULL, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox, 0, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox, 42, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     annotatemore_close();
 
@@ -1121,25 +1121,25 @@ static void test_msg_copy(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE1);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE2);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox2, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL_FATAL(val2.s);
+    CU_ASSERT_EQUAL_FATAL(0, buf_len(&val2));
 
     const char *u1 = mailbox_uniqueid(mailbox1);
     buf_printf(&path1, "%s/data/uuid/%c/%c/%s/cyrus.annotations", DBDIR,
@@ -1175,13 +1175,13 @@ static void test_msg_copy(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox2, 1, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
 
     /* check that the values not copied are only present in the source
@@ -1190,24 +1190,24 @@ static void test_msg_copy(void)
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE1);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox1, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE2);
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox2, 2, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL(val2.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val2));
 
     buf_free(&val2);
     r = annotatemore_msg_lookup(mailbox2, 3, COMMENT, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NULL(val2.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val2));
 
     CU_ASSERT_EQUAL(fexists(buf_cstring(&path1)), 0);
     CU_ASSERT_EQUAL(fexists(buf_cstring(&path2)), 0);
@@ -1410,7 +1410,7 @@ static void test_getset_server_undefined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* setting a value should fail */
 
@@ -1449,7 +1449,7 @@ static void test_getset_server_undefined(void)
     buf_free(&val);
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     annotate_state_abort(&astate);
     annotatemore_close();
@@ -1507,7 +1507,7 @@ static void test_getset_server_defined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* set a value */
 
@@ -1538,7 +1538,7 @@ static void test_getset_server_defined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1568,7 +1568,7 @@ static void test_getset_server_defined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1601,7 +1601,7 @@ static void test_getset_server_defined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1640,7 +1640,7 @@ static void test_getset_server_defined(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
 
     annotate_state_abort(&astate);
@@ -1701,7 +1701,7 @@ static void test_getset_server_defined_ucase(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
     /* set a value */
 
@@ -1732,7 +1732,7 @@ static void test_getset_server_defined_ucase(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1762,7 +1762,7 @@ static void test_getset_server_defined_ucase(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1795,7 +1795,7 @@ static void test_getset_server_defined_ucase(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val2);
     CU_ASSERT_EQUAL_FATAL(r, 0);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(val2.s);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf_s(&val2));
     CU_ASSERT_STRING_EQUAL(buf_cstring(&val2), VALUE0);
     buf_free(&val2);
 
@@ -1834,7 +1834,7 @@ static void test_getset_server_defined_ucase(void)
 
     r = annotatemore_lookup(/*mboxname*/"", EXENTRY, /*userid*/"", &val);
     CU_ASSERT_EQUAL(r, 0);
-    CU_ASSERT_PTR_NULL(val.s);
+    CU_ASSERT_EQUAL(0, buf_len(&val));
 
 
     annotate_state_abort(&astate);
@@ -1855,7 +1855,7 @@ static const char *stringifyea(const struct entryattlist *ea)
         buf_printf(&buf, "(%s", ea->entry);
         for (av = ea->attvalues ; av ; av = av->next) {
             buf_printf(&buf, "(%s\"", av->attrib);
-            buf_appendmap(&buf, av->value.s, av->value.len);
+            buf_appendmap(&buf, buf_s(&av->value), buf_len(&av->value));
             buf_appendcstr(&buf, "\")");
         }
         buf_putc(&buf, ')');

@@ -1746,7 +1746,7 @@ EXPORTED int index_scan(struct index_state *state, const char *contents)
         if (mailbox_map_record(mailbox, &record, &buf))
             continue;
 
-        n += index_scan_work(buf.s, buf.len, contents, length);
+        n += index_scan_work(buf_s(&buf), buf_len(&buf), contents, length);
 
         buf_free(&buf);
     }
@@ -3271,7 +3271,7 @@ void index_fetchmsg(struct index_state *state, const struct buf *msg,
     unsigned n, domain;
 
     /* If no data, output NIL */
-    if (!msg || !msg->s) {
+    if (!msg || !buf_s(msg)) {
         prot_printf(state->out, "NIL");
         return;
     }
@@ -3296,9 +3296,9 @@ void index_fetchmsg(struct index_state *state, const struct buf *msg,
     /* Seek over PARTIAL constraint */
     offset += start_octet;
     n = size;
-    if (offset + size > msg->len) {
-        if (msg->len > offset) {
-            n = msg->len - offset;
+    if (offset + size > buf_len(msg)) {
+        if (buf_len(msg) > offset) {
+            n = buf_len(msg) - offset;
         }
         else {
             prot_printf(state->out, "\"\"");
@@ -3307,7 +3307,7 @@ void index_fetchmsg(struct index_state *state, const struct buf *msg,
     }
 
     /* Get domain of the data */
-    domain = data_domain(msg->s + offset, n);
+    domain = data_domain(buf_s(msg) + offset, n);
 
     if (domain == DOMAIN_BINARY) {
         /* Write size of literal8 */
@@ -3320,7 +3320,7 @@ void index_fetchmsg(struct index_state *state, const struct buf *msg,
     /* Non-text literal -- tell the protstream about it */
     if (domain != DOMAIN_7BIT) prot_data_boundary(state->out);
 
-    prot_write(state->out, msg->s + offset, n);
+    prot_write(state->out, buf_s(msg) + offset, n);
     while (n++ < size) {
         /* File too short, resynch client.
          *
@@ -3382,7 +3382,7 @@ static int index_fetchsection(struct index_state *state, const char *resp,
 
     p = section;
 
-    buf_init_ro(&msg, inmsg->s, inmsg->len);
+    buf_init_ro(&msg, buf_s(inmsg), buf_len(inmsg));
 
     /* Special-case BODY[] */
     if (*p == ']') {
@@ -3453,21 +3453,21 @@ emitpart:
         size = body->content_size;
     }
 
-    if (msg.s && !wantheader && (p = strstr(resp, "BINARY"))) {
+    if (buf_s(&msg) && !wantheader && (p = strstr(resp, "BINARY"))) {
         /* BINARY or BINARY.SIZE */
         int encoding = body->charset_enc & 0xff;
         size_t newsize;
 
         /* check that the offset isn't corrupt */
-        if (offset + size > msg.len) {
+        if (offset + size > buf_len(&msg)) {
             syslog(LOG_ERR, "invalid part offset in %s", index_mboxname(state));
             return IMAP_IOERROR;
         }
 
-        msg.s = (char *)charset_decode_mimebody(msg.s + offset, size, encoding,
-                                                &decbuf, &newsize);
+        buf_init_ro_cstr(&msg, charset_decode_mimebody(buf_s(&msg) + offset, size, encoding,
+                                                &decbuf, &newsize));
 
-        if (!msg.s) {
+        if (!buf_s(&msg)) {
             /* failed to decode */
             if (decbuf) free(decbuf);
             return IMAP_NO_UNKNOWN_CTE;
@@ -3482,7 +3482,7 @@ emitpart:
             /* BINARY */
             offset = 0;
             size = newsize;
-            msg.len = newsize;
+            buf_truncate(&msg, newsize);
         }
     }
 
@@ -3676,8 +3676,8 @@ index_fetchcacheheader(struct index_state *state, struct index_record *record,
                      cacheitem_size(record, CACHE_HEADERS));
     buf_cstring(&buf);
 
-    message_pruneheader(buf.s, headers, 0);
-    size = strlen(buf.s); /* not buf.len, it has been pruned */
+    message_pruneheader(buf_s(&buf), headers, 0);
+    size = strlen(buf_s(&buf)); /* not buf_len(&buf), it has been pruned */
 
     /* partial fetch: adjust 'size' */
     if (octet_count) {
@@ -3709,7 +3709,7 @@ index_fetchcacheheader(struct index_state *state, struct index_record *record,
     }
     else {
         prot_printf(state->out, "{%u}\r\n", size + crlf_size);
-        prot_write(state->out, buf.s + start_octet, size);
+        prot_write(state->out, buf_s(&buf) + start_octet, size);
         prot_write(state->out, crlf + crlf_start, crlf_size);
     }
 }
@@ -3900,7 +3900,7 @@ static void fetch_annotation_response(const char *mboxname
         sep2 = ' ';
         prot_printastring(frock->pout, l->attrib);
         prot_putc(' ', frock->pout);
-        prot_printmap(frock->pout, l->value.s, l->value.len);
+        prot_printmap(frock->pout, buf_s(&l->value), buf_len(&l->value));
     }
     prot_putc(')', frock->pout);
 
@@ -4286,8 +4286,8 @@ static int index_fetchreply(struct index_state *state, uint32_t msgno,
         sepchar = ' ';
     }
     if (fetchitems & FETCH_FILESIZE) {
-        unsigned int msg_size = buf.len;
-        if (!buf.s) {
+        unsigned int msg_size = buf_len(&buf);
+        if (!buf_s(&buf)) {
             const char *fname = mailbox_record_fname(mailbox, &record);
             struct stat sbuf;
             /* Find the size of the message file */
@@ -4302,7 +4302,7 @@ static int index_fetchreply(struct index_state *state, uint32_t msgno,
     }
     if (fetchitems & FETCH_SHA1) {
         struct message_guid tmpguid;
-        message_guid_generate(&tmpguid, buf.s, buf.len);
+        message_guid_generate(&tmpguid, buf_s(&buf), buf_len(&buf));
         prot_printf(state->out, "%cRFC822.SHA1 %s", sepchar, message_guid_encode(&tmpguid));
         sepchar = ' ';
     }
@@ -4438,7 +4438,7 @@ static int index_fetchreply(struct index_state *state, uint32_t msgno,
         prot_printf(state->out, "%cRFC822.HEADER ", sepchar);
         sepchar = ' ';
         if (fetchargs->cache_atleast > record.cache_version) {
-            index_fetchheader(state, buf.s, buf.len,
+            index_fetchheader(state, buf_s(&buf), buf_len(&buf),
                               record.header_size,
                               &fetchargs->headers, &fetchargs->headers_not);
         } else {
@@ -4485,7 +4485,7 @@ static int index_fetchreply(struct index_state *state, uint32_t msgno,
         if (fetchargs->cache_atleast > record.cache_version) {
             loadbody(mailbox, &record, &body);
             if (body) {
-                index_fetchfsection(state, buf.s, buf.len,
+                index_fetchfsection(state, buf_s(&buf), buf_len(&buf),
                                     fsection,
                                     body,
                                     (fetchitems & FETCH_IS_PARTIAL) ?
@@ -4636,8 +4636,8 @@ EXPORTED int index_urlfetch(struct index_state *state, uint32_t msgno,
         goto done;
     }
 
-    data = buf.s;
-    size = buf.len;
+    data = buf_s(&buf);
+    size = buf_len(&buf);
 
     int is_binary = params & URLFETCH_BINARY;
 
@@ -5199,7 +5199,7 @@ static int extract_icalbuf(struct buf *raw, charset_t charset, int encoding,
                     s += 7;
                 }
                 param = icalproperty_get_first_parameter(prop, ICAL_CN_PARAMETER);
-                if (buf.len) {
+                if (buf_len(&buf)) {
                     buf_appendcstr(&buf, ", ");
                 }
                 if (param) {
@@ -5209,7 +5209,7 @@ static int extract_icalbuf(struct buf *raw, charset_t charset, int encoding,
                 }
             }
         }
-        if (buf.len) {
+        if (buf_len(&buf)) {
             stuff_part(str->receiver, SEARCH_PART_TO, &buf);
             buf_reset(&buf);
         }
@@ -5302,7 +5302,7 @@ static int extract_vcardbuf(struct buf *raw, charset_t charset, int encoding,
     _add_vcard_multival(vcard->objects, "org", &buf);
     _add_vcard_multival(vcard->objects, "adr", &buf);
 
-    if (buf.len) {
+    if (buf_len(&buf)) {
         charset_t utf8 = charset_lookupname("utf-8");
         str->receiver->begin_part(str->receiver, SEARCH_PART_BODY);
         charset_extract(extract_cb, str, &buf, utf8, 0, "vcard",
@@ -5739,7 +5739,7 @@ static int getsearchtext_cb(int isbody, charset_t charset, int encoding,
 
 
     }
-    else if (buf_len(data) > 50 && !memcmp(data->s, "-----BEGIN PGP MESSAGE-----", 27)) {
+    else if (buf_len(data) > 50 && !memcmp(buf_s(data), "-----BEGIN PGP MESSAGE-----", 27)) {
         /* PGP encrypted body part - we don't want to index this,
          * it's a ton of random base64 noise */
     }
@@ -6597,7 +6597,7 @@ void index_get_ids(MsgData *msgdata, char *envtokens[], const char *headers,
      /* if we don't have one, create one */
     if (!msgdata->msgid) {
         buf_printf(&buf, "<Empty-ID: %u>", msgdata->msgno);
-        msgdata->msgid = xstrdup(buf.s);
+        msgdata->msgid = xstrdup(buf_s(&buf));
         buf_reset(&buf);
     }
 
@@ -6607,13 +6607,13 @@ void index_get_ids(MsgData *msgdata, char *envtokens[], const char *headers,
 
     /* grab the References header */
     strarray_append(&refhdr, "references");
-    message_pruneheader(buf.s, &refhdr, 0);
+    message_pruneheader(buf_s(&buf), &refhdr, 0);
     strarray_fini(&refhdr);
 
-    if (buf.s) {
+    if (buf_s(&buf)) {
         /* allocate some space for refs */
         /* find references */
-        refstr = buf.s;
+        refstr = buf_s(&buf);
         massage_header(refstr);
         while ((ref = find_msgid(refstr, &refstr)) != NULL)
             strarray_appendm(&msgdata->ref, ref);
@@ -8052,17 +8052,17 @@ EXPORTED extern char *index_getheader(struct index_state *state,
         struct buf msgbuf = BUF_INITIALIZER;
         if (mailbox_map_record(mailbox, &record, &msgbuf))
             return NULL;
-        buf_setcstr(&staticbuf, index_readheader(msgbuf.s, msgbuf.len, 0, record.header_size));
+        buf_setcstr(&staticbuf, index_readheader(buf_s(&msgbuf), buf_len(&msgbuf), 0, record.header_size));
         buf_free(&msgbuf);
     }
 
     buf_cstring(&staticbuf);
 
     strarray_append(&headers, hdr);
-    message_pruneheader(staticbuf.s, &headers, NULL);
+    message_pruneheader(buf_s(&staticbuf), &headers, NULL);
     strarray_fini(&headers);
 
-    buf = staticbuf.s;
+    buf = buf_s(&staticbuf);
     if (*buf) {
         buf += strlen(hdr) + 1; /* skip header: */
         massage_header(buf);
@@ -8193,7 +8193,7 @@ EXPORTED char *sortcrit_as_string(const struct sortcrit *sortcrit)
     };
 
     do {
-        if (b.len)
+        if (buf_len(&b))
             buf_putc(&b, ' ');
         if (sortcrit->flags & SORT_REVERSE)
             buf_appendcstr(&b, "REVERSE ");

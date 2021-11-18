@@ -752,9 +752,7 @@ static void imapd_reset(void)
     for (i = 0; i < ptrarray_size(&backend_cached); i++) {
         struct backend *be = ptrarray_nth(&backend_cached, i);
         proxy_downserver(be);
-        if (be->last_result.s) {
-            free(be->last_result.s);
-        }
+        buf_free(&be->last_result);
         free(be);
     }
     ptrarray_fini(&backend_cached);
@@ -1093,9 +1091,7 @@ void shut_down(int code)
     for (i = 0; i < ptrarray_size(&backend_cached); i++) {
         struct backend *be = ptrarray_nth(&backend_cached, i);
         proxy_downserver(be);
-        if (be->last_result.s) {
-            free(be->last_result.s);
-        }
+        buf_free(&be->last_result);
         free(be);
     }
     ptrarray_fini(&backend_cached);
@@ -1317,7 +1313,7 @@ static void cmdloop(void)
             }
             goto done;
         }
-        if (c != ' ' || !imparse_isatom(tag.s) || (tag.s[0] == '*' && !tag.s[1])) {
+        if (c != ' ' || !imparse_isatom(buf_s(&tag)) || (buf_s(&tag)[0] == '*' && !buf_s(&tag)[1])) {
             prot_printf(imapd_out, "* BAD Invalid tag\r\n");
             eatline(imapd_in, c);
             continue;
@@ -1325,19 +1321,19 @@ static void cmdloop(void)
 
         /* Parse command name */
         c = getword(imapd_in, &cmd);
-        if (!cmd.s[0]) {
-            prot_printf(imapd_out, "%s BAD Null command\r\n", tag.s);
+        if (!buf_s(&cmd)[0]) {
+            prot_printf(imapd_out, "%s BAD Null command\r\n", buf_s(&tag));
             eatline(imapd_in, c);
             continue;
         }
-        lcase(cmd.s);
-        xstrncpy(cmdname, cmd.s, 99);
-        cmd.s[0] = toupper((unsigned char) cmd.s[0]);
+        buf_lcase(&cmd);
+        xstrncpy(cmdname, buf_s(&cmd), 99);
+        buf_s(&cmd)[0] = toupper((unsigned char) buf_s(&cmd)[0]);
 
         if (config_getswitch(IMAPOPT_CHATTY))
-            syslog(LOG_NOTICE, "command: %s %s", tag.s, cmd.s);
+            syslog(LOG_NOTICE, "command: %s %s", buf_s(&tag), buf_s(&cmd));
 
-        proc_register(config_ident, imapd_clienthost, imapd_userid, index_mboxname(imapd_index), cmd.s);
+        proc_register(config_ident, imapd_clienthost, imapd_userid, index_mboxname(imapd_index), buf_s(&cmd));
 
         /* if we need to force a kick, do so */
         if (referral_kick) {
@@ -1353,7 +1349,7 @@ static void cmdloop(void)
 
         /* Only Authenticate/Enable/Login/Logout/Noop/Capability/Id/Starttls
            allowed when not logged in */
-        if (!imapd_userid && !strchr("AELNCIS", cmd.s[0])) goto nologin;
+        if (!imapd_userid && !strchr("AELNCIS", buf_s(&cmd)[0])) goto nologin;
 
         /* Start command timer */
         cmdtime_starttimer();
@@ -1361,15 +1357,15 @@ static void cmdloop(void)
         /* note that about half the commands (the common ones that don't
            hit the mailboxes file) now close the mailboxes file just in
            case it was open. */
-        switch (cmd.s[0]) {
+        switch (buf_s(&cmd)[0]) {
         case 'A':
-            if (!strcmp(cmd.s, "Authenticate")) {
+            if (!strcmp(buf_s(&cmd), "Authenticate")) {
                 int haveinitresp = 0;
 
                 if (c != ' ') goto missingargs;
                 c = getword(imapd_in, &arg1);
-                if (!imparse_isatom(arg1.s)) {
-                    prot_printf(imapd_out, "%s BAD Invalid authenticate mechanism\r\n", tag.s);
+                if (!imparse_isatom(buf_s(&arg1))) {
+                    prot_printf(imapd_out, "%s BAD Invalid authenticate mechanism\r\n", buf_s(&tag));
                     eatline(imapd_in, c);
                     continue;
                 }
@@ -1381,21 +1377,21 @@ static void cmdloop(void)
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
                 if (imapd_userid) {
-                    prot_printf(imapd_out, "%s BAD Already authenticated\r\n", tag.s);
+                    prot_printf(imapd_out, "%s BAD Already authenticated\r\n", buf_s(&tag));
                     continue;
                 }
-                cmd_authenticate(tag.s, arg1.s, haveinitresp ? arg2.s : NULL);
+                cmd_authenticate(buf_s(&tag), buf_s(&arg1), haveinitresp ? buf_s(&arg2) : NULL);
 
                 /* prometheus stat is counted by cmd_authenticate based on success/failure */
             }
             else if (!imapd_userid) goto nologin;
-            else if (!strcmp(cmd.s, "Append")) {
+            else if (!strcmp(buf_s(&cmd), "Append")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
 
-                cmd_append(tag.s, arg1.s, NULL);
+                cmd_append(buf_s(&tag), buf_s(&arg1), NULL);
 
                 prometheus_increment(CYRUS_IMAP_APPEND_TOTAL);
             }
@@ -1403,34 +1399,34 @@ static void cmdloop(void)
             break;
 
         case 'C':
-            if (!strcmp(cmd.s, "Capability")) {
+            if (!strcmp(buf_s(&cmd), "Capability")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_capability(tag.s);
+                cmd_capability(buf_s(&tag));
 
                 prometheus_increment(CYRUS_IMAP_CAPABILITY_TOTAL);
             }
             else if (!imapd_userid) goto nologin;
 #ifdef HAVE_ZLIB
-            else if (!strcmp(cmd.s, "Compress")) {
+            else if (!strcmp(buf_s(&cmd), "Compress")) {
                 if (c != ' ') goto missingargs;
                 c = getword(imapd_in, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_compress(tag.s, arg1.s);
+                cmd_compress(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_COMPRESS_TOTAL);
             }
 #endif /* HAVE_ZLIB */
-            else if (!strcmp(cmd.s, "Check")) {
+            else if (!strcmp(buf_s(&cmd), "Check")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_noop(tag.s, cmd.s);
+                cmd_noop(buf_s(&tag), buf_s(&cmd));
 
                 prometheus_increment(CYRUS_IMAP_CHECK_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Copy")) {
+            else if (!strcmp(buf_s(&cmd), "Copy")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
@@ -1438,16 +1434,16 @@ static void cmdloop(void)
             copy:
                 c = getword(imapd_in, &arg1);
                 if (c == '\r') goto missingargs;
-                if (c != ' ' || !imparse_issequence(arg1.s)) goto badsequence;
+                if (c != ' ' || !imparse_issequence(buf_s(&arg1))) goto badsequence;
                 c = getastring(imapd_in, imapd_out, &arg2);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_copy(tag.s, arg1.s, arg2.s, usinguid, /*ismove*/0);
+                cmd_copy(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), usinguid, /*ismove*/0);
 
                 prometheus_increment(CYRUS_IMAP_COPY_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Create")) {
+            else if (!strcmp(buf_s(&cmd), "Create")) {
                 if (readonly) goto noreadonly;
                 struct dlist *extargs = NULL;
 
@@ -1459,16 +1455,16 @@ static void cmdloop(void)
                     if (c == EOF) goto badpartition;
                 }
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_create(tag.s, arg1.s, extargs, 0);
+                cmd_create(buf_s(&tag), buf_s(&arg1), extargs, 0);
                 dlist_free(&extargs);
 
                 prometheus_increment(CYRUS_IMAP_CREATE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Close")) {
+            else if (!strcmp(buf_s(&cmd), "Close")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_close(tag.s, cmd.s);
+                cmd_close(buf_s(&tag), buf_s(&cmd));
 
                 prometheus_increment(CYRUS_IMAP_CLOSE_TOTAL);
             }
@@ -1476,17 +1472,17 @@ static void cmdloop(void)
             break;
 
         case 'D':
-            if (!strcmp(cmd.s, "Delete")) {
+            if (!strcmp(buf_s(&cmd), "Delete")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_delete(tag.s, arg1.s, 0, 0);
+                cmd_delete(buf_s(&tag), buf_s(&arg1), 0, 0);
 
                 prometheus_increment(CYRUS_IMAP_DELETE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Deleteacl")) {
+            else if (!strcmp(buf_s(&cmd), "Deleteacl")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -1494,11 +1490,11 @@ static void cmdloop(void)
                 c = getastring(imapd_in, imapd_out, &arg2);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_setacl(tag.s, arg1.s, arg2.s, NULL);
+                cmd_setacl(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), NULL);
 
                 prometheus_increment(CYRUS_IMAP_DELETEACL_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Dump")) {
+            else if (!strcmp(buf_s(&cmd), "Dump")) {
                 if (readonly) goto noreadonly;
                 int uid_start = 0;
 
@@ -1506,13 +1502,13 @@ static void cmdloop(void)
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if(c == ' ') {
                     c = getastring(imapd_in, imapd_out, &arg2);
-                    if(!imparse_isnumber(arg2.s)) goto extraargs;
-                    uid_start = atoi(arg2.s);
+                    if(!imparse_isnumber(buf_s(&arg2))) goto extraargs;
+                    uid_start = atoi(buf_s(&arg2));
                 }
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_dump(tag.s, arg1.s, uid_start);
+                cmd_dump(buf_s(&tag), buf_s(&arg1), uid_start);
                 prometheus_increment(CYRUS_IMAP_DUMP_TOTAL);
             }
             else goto badcmd;
@@ -1520,27 +1516,27 @@ static void cmdloop(void)
 
         case 'E':
             if (!imapd_userid) goto nologin;
-            else if (!strcmp(cmd.s, "Enable")) {
+            else if (!strcmp(buf_s(&cmd), "Enable")) {
                 if (c != ' ') goto missingargs;
 
-                cmd_enable(tag.s);
+                cmd_enable(buf_s(&tag));
             }
-            else if (!strcmp(cmd.s, "Expunge")) {
+            else if (!strcmp(buf_s(&cmd), "Expunge")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_expunge(tag.s, 0);
+                cmd_expunge(buf_s(&tag), 0);
 
                 prometheus_increment(CYRUS_IMAP_EXPUNGE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Examine")) {
+            else if (!strcmp(buf_s(&cmd), "Examine")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 prot_ungetc(c, imapd_in);
 
-                cmd_select(tag.s, cmd.s, arg1.s);
+                cmd_select(buf_s(&tag), buf_s(&cmd), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_EXAMINE_TOTAL);
             }
@@ -1548,16 +1544,16 @@ static void cmdloop(void)
             break;
 
         case 'F':
-            if (!strcmp(cmd.s, "Fetch")) {
+            if (!strcmp(buf_s(&cmd), "Fetch")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             fetch:
                 c = getword(imapd_in, &arg1);
                 if (c == '\r') goto missingargs;
-                if (c != ' ' || !imparse_issequence(arg1.s)) goto badsequence;
+                if (c != ' ' || !imparse_issequence(buf_s(&arg1))) goto badsequence;
 
-                cmd_fetch(tag.s, arg1.s, usinguid);
+                cmd_fetch(buf_s(&tag), buf_s(&arg1), usinguid);
 
                 prometheus_increment(CYRUS_IMAP_FETCH_TOTAL);
             }
@@ -1565,54 +1561,54 @@ static void cmdloop(void)
             break;
 
         case 'G':
-            if (!strcmp(cmd.s, "Getacl")) {
+            if (!strcmp(buf_s(&cmd), "Getacl")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_getacl(tag.s, arg1.s);
+                cmd_getacl(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_GETACL_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Getannotation")) {
+            else if (!strcmp(buf_s(&cmd), "Getannotation")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
 
-                cmd_getannotation(tag.s, arg1.s);
+                cmd_getannotation(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_GETANNOTATION_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Getmetadata")) {
+            else if (!strcmp(buf_s(&cmd), "Getmetadata")) {
                 if (c != ' ') goto missingargs;
 
-                cmd_getmetadata(tag.s);
+                cmd_getmetadata(buf_s(&tag));
 
                 prometheus_increment(CYRUS_IMAP_GETMETADATA_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Getquota")) {
+            else if (!strcmp(buf_s(&cmd), "Getquota")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_getquota(tag.s, arg1.s);
+                cmd_getquota(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_GETQUOTA_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Getquotaroot")) {
+            else if (!strcmp(buf_s(&cmd), "Getquotaroot")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_getquotaroot(tag.s, arg1.s);
+                cmd_getquotaroot(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_GETQUOTAROOT_TOTAL);
             }
 #ifdef HAVE_SSL
-            else if (!strcmp(cmd.s, "Genurlauth")) {
+            else if (!strcmp(buf_s(&cmd), "Genurlauth")) {
                 if (c != ' ') goto missingargs;
 
-                cmd_genurlauth(tag.s);
+                cmd_genurlauth(buf_s(&tag));
                 prometheus_increment(CYRUS_IMAP_GENURLAUTH_TOTAL);
             }
 #endif
@@ -1620,16 +1616,16 @@ static void cmdloop(void)
             break;
 
         case 'I':
-            if (!strcmp(cmd.s, "Id")) {
+            if (!strcmp(buf_s(&cmd), "Id")) {
                 if (c != ' ') goto missingargs;
-                cmd_id(tag.s);
+                cmd_id(buf_s(&tag));
 
                 prometheus_increment(CYRUS_IMAP_ID_TOTAL);
             }
             else if (!imapd_userid) goto nologin;
-            else if (!strcmp(cmd.s, "Idle") && idle_enabled()) {
+            else if (!strcmp(buf_s(&cmd), "Idle") && idle_enabled()) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_idle(tag.s);
+                cmd_idle(buf_s(&tag));
 
                 prometheus_increment(CYRUS_IMAP_IDLE_TOTAL);
             }
@@ -1637,16 +1633,16 @@ static void cmdloop(void)
             break;
 
         case 'L':
-            if (!strcmp(cmd.s, "Login")) {
+            if (!strcmp(buf_s(&cmd), "Login")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if(c != ' ') goto missingargs;
 
-                cmd_login(tag.s, arg1.s);
+                cmd_login(buf_s(&tag), buf_s(&arg1));
 
                 /* prometheus stat is counted by cmd_login based on success/failure */
             }
-            else if (!strcmp(cmd.s, "Logout")) {
+            else if (!strcmp(buf_s(&cmd), "Logout")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
                 prometheus_increment(CYRUS_IMAP_LOGOUT_TOTAL);
@@ -1656,7 +1652,7 @@ static void cmdloop(void)
 
                 prot_printf(imapd_out, "* BYE %s\r\n",
                             error_message(IMAP_BYE_LOGOUT));
-                prot_printf(imapd_out, "%s OK %s\r\n", tag.s,
+                prot_printf(imapd_out, "%s OK %s\r\n", buf_s(&tag),
                             error_message(IMAP_OK_COMPLETED));
 
                 if (imapd_userid && *imapd_userid) {
@@ -1666,19 +1662,19 @@ static void cmdloop(void)
                 goto done;
             }
             else if (!imapd_userid) goto nologin;
-            else if (!strcmp(cmd.s, "List")) {
+            else if (!strcmp(buf_s(&cmd), "List")) {
                 struct listargs listargs;
 
                 if (c != ' ') goto missingargs;
 
                 memset(&listargs, 0, sizeof(struct listargs));
                 listargs.ret = LIST_RET_CHILDREN;
-                getlistargs(tag.s, &listargs);
-                if (listargs.pat.count) cmd_list(tag.s, &listargs);
+                getlistargs(buf_s(&tag), &listargs);
+                if (listargs.pat.count) cmd_list(buf_s(&tag), &listargs);
 
                 prometheus_increment(CYRUS_IMAP_LIST_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Lsub")) {
+            else if (!strcmp(buf_s(&cmd), "Lsub")) {
                 struct listargs listargs;
 
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -1691,23 +1687,23 @@ static void cmdloop(void)
                 listargs.sel = LIST_SEL_SUBSCRIBED;
                 if (!strcasecmpsafe(imapd_magicplus, "+dav"))
                     listargs.sel |= LIST_SEL_DAV;
-                listargs.ref = arg1.s;
-                strarray_append(&listargs.pat, arg2.s);
+                listargs.ref = buf_s(&arg1);
+                strarray_append(&listargs.pat, buf_s(&arg2));
 
-                cmd_list(tag.s, &listargs);
+                cmd_list(buf_s(&tag), &listargs);
 
                 prometheus_increment(CYRUS_IMAP_LSUB_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Listrights")) {
+            else if (!strcmp(buf_s(&cmd), "Listrights")) {
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg2);
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_listrights(tag.s, arg1.s, arg2.s);
+                cmd_listrights(buf_s(&tag), buf_s(&arg1), buf_s(&arg2));
 
                 prometheus_increment(CYRUS_IMAP_LISTRIGHTS_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Localappend")) {
+            else if (!strcmp(buf_s(&cmd), "Localappend")) {
                 if (readonly) goto noreadonly;
                 /* create a local-only mailbox */
                 if (c != ' ') goto missingargs;
@@ -1716,11 +1712,11 @@ static void cmdloop(void)
                 c = getastring(imapd_in, imapd_out, &arg2);
                 if (c != ' ') goto missingargs;
 
-                cmd_append(tag.s, arg1.s, *arg2.s ? arg2.s : NULL);
+                cmd_append(buf_s(&tag), buf_s(&arg1), *buf_s(&arg2) ? buf_s(&arg2) : NULL);
 
                 prometheus_increment(CYRUS_IMAP_APPEND_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Localcreate")) {
+            else if (!strcmp(buf_s(&cmd), "Localcreate")) {
                 if (readonly) goto noreadonly;
                 /* create a local-only mailbox */
                 struct dlist *extargs = NULL;
@@ -1733,19 +1729,19 @@ static void cmdloop(void)
                     if (c == EOF) goto badpartition;
                 }
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_create(tag.s, arg1.s, extargs, 1);
+                cmd_create(buf_s(&tag), buf_s(&arg1), extargs, 1);
                 dlist_free(&extargs);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_CREATE_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Localdelete")) {
+            else if (!strcmp(buf_s(&cmd), "Localdelete")) {
                 if (readonly) goto noreadonly;
                 /* delete a mailbox locally only */
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_delete(tag.s, arg1.s, 1, 1);
+                cmd_delete(buf_s(&tag), buf_s(&arg1), 1, 1);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_DELETE_TOTAL); */
             }
@@ -1753,26 +1749,26 @@ static void cmdloop(void)
             break;
 
         case 'M':
-            if (!strcmp(cmd.s, "Myrights")) {
+            if (!strcmp(buf_s(&cmd), "Myrights")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_myrights(tag.s, arg1.s);
+                cmd_myrights(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_MYRIGHTS_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Mupdatepush")) {
+            else if (!strcmp(buf_s(&cmd), "Mupdatepush")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if(c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_mupdatepush(tag.s, arg1.s);
+                cmd_mupdatepush(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_MUPDATEPUSH_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Move")) {
+            else if (!strcmp(buf_s(&cmd), "Move")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
@@ -1780,29 +1776,29 @@ static void cmdloop(void)
             move:
                 c = getword(imapd_in, &arg1);
                 if (c == '\r') goto missingargs;
-                if (c != ' ' || !imparse_issequence(arg1.s)) goto badsequence;
+                if (c != ' ' || !imparse_issequence(buf_s(&arg1))) goto badsequence;
                 c = getastring(imapd_in, imapd_out, &arg2);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_copy(tag.s, arg1.s, arg2.s, usinguid, /*ismove*/1);
+                cmd_copy(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), usinguid, /*ismove*/1);
 
                 prometheus_increment(CYRUS_IMAP_COPY_TOTAL);
             } else goto badcmd;
             break;
 
         case 'N':
-            if (!strcmp(cmd.s, "Noop")) {
+            if (!strcmp(buf_s(&cmd), "Noop")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_noop(tag.s, cmd.s);
+                cmd_noop(buf_s(&tag), buf_s(&cmd));
 
                 /* XXX prometheus_increment(CYRUS_IMAP_NOOP_TOTAL); */
             }
             else if (!imapd_userid) goto nologin;
-            else if (!strcmp(cmd.s, "Namespace")) {
+            else if (!strcmp(buf_s(&cmd), "Namespace")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_namespace(tag.s);
+                cmd_namespace(buf_s(&tag));
 
                 /* XXX prometheus_increment(CYRUS_IMAP_NAMESPACE_TOTAL); */
             }
@@ -1810,7 +1806,7 @@ static void cmdloop(void)
             break;
 
         case 'R':
-            if (!strcmp(cmd.s, "Rename")) {
+            if (!strcmp(buf_s(&cmd), "Rename")) {
                 if (readonly) goto noreadonly;
                 havepartition = 0;
                 if (c != ' ') goto missingargs;
@@ -1821,13 +1817,13 @@ static void cmdloop(void)
                 if (c == ' ') {
                     havepartition = 1;
                     c = getword(imapd_in, &arg3);
-                    if (!imparse_isatom(arg3.s)) goto badpartition;
+                    if (!imparse_isatom(buf_s(&arg3))) goto badpartition;
                 }
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_rename(tag.s, arg1.s, arg2.s, havepartition ? arg3.s : 0);
+                cmd_rename(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), havepartition ? buf_s(&arg3) : 0);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_RENAME_TOTAL); */
-            } else if(!strcmp(cmd.s, "Reconstruct")) {
+            } else if(!strcmp(buf_s(&cmd), "Reconstruct")) {
                 if (readonly) goto noreadonly;
                 recursive = 0;
                 if (c != ' ') goto missingargs;
@@ -1835,19 +1831,19 @@ static void cmdloop(void)
                 if(c == ' ') {
                     /* Optional RECURSIVE argument */
                     c = getword(imapd_in, &arg2);
-                    if(!imparse_isatom(arg2.s))
+                    if(!imparse_isatom(buf_s(&arg2)))
                         goto extraargs;
-                    else if(!strcasecmp(arg2.s, "RECURSIVE"))
+                    else if(!strcasecmp(buf_s(&arg2), "RECURSIVE"))
                         recursive = 1;
                     else
                         goto extraargs;
                 }
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_reconstruct(tag.s, arg1.s, recursive);
+                cmd_reconstruct(buf_s(&tag), buf_s(&arg1), recursive);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_RECONSTRUCT_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Rlist")) {
+            else if (!strcmp(buf_s(&cmd), "Rlist")) {
                 struct listargs listargs;
 
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -1858,14 +1854,14 @@ static void cmdloop(void)
                 memset(&listargs, 0, sizeof(struct listargs));
                 listargs.sel = LIST_SEL_REMOTE;
                 listargs.ret = LIST_RET_CHILDREN;
-                listargs.ref = arg1.s;
-                strarray_append(&listargs.pat, arg2.s);
+                listargs.ref = buf_s(&arg1);
+                strarray_append(&listargs.pat, buf_s(&arg2));
 
-                cmd_list(tag.s, &listargs);
+                cmd_list(buf_s(&tag), &listargs);
 
                 /* XXX prometheus_increment(prom_handle, CYRUS_IMAP_LIST_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Rlsub")) {
+            else if (!strcmp(buf_s(&cmd), "Rlsub")) {
                 struct listargs listargs;
 
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -1876,15 +1872,15 @@ static void cmdloop(void)
                 memset(&listargs, 0, sizeof(struct listargs));
                 listargs.cmd = LIST_CMD_LSUB;
                 listargs.sel = LIST_SEL_REMOTE | LIST_SEL_SUBSCRIBED;
-                listargs.ref = arg1.s;
-                strarray_append(&listargs.pat, arg2.s);
+                listargs.ref = buf_s(&arg1);
+                strarray_append(&listargs.pat, buf_s(&arg2));
 
-                cmd_list(tag.s, &listargs);
+                cmd_list(buf_s(&tag), &listargs);
 
                 /* XXX prometheus_increment(prom_handle, CYRUS_IMAP_LSUB_TOTAL); */
             }
 #ifdef HAVE_SSL
-            else if (!strcmp(cmd.s, "Resetkey")) {
+            else if (!strcmp(buf_s(&cmd), "Resetkey")) {
                 int have_mbox = 0, have_mech = 0;
 
                 if (c == ' ') {
@@ -1898,8 +1894,8 @@ static void cmdloop(void)
                 }
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_resetkey(tag.s, have_mbox ? arg1.s : 0,
-                             have_mech ? arg2.s : 0);
+                cmd_resetkey(buf_s(&tag), have_mbox ? buf_s(&arg1) : 0,
+                             have_mech ? buf_s(&arg2) : 0);
                 /* XXX prometheus_increment(CYRUS_IMAP_RESETKEY_TOTAL); */
             }
 #endif
@@ -1907,7 +1903,7 @@ static void cmdloop(void)
             break;
 
         case 'S':
-            if (!strcmp(cmd.s, "Starttls")) {
+            if (!strcmp(buf_s(&cmd), "Starttls")) {
                 if (!tls_enabled()) {
                     /* we don't support starttls */
                     goto badcmd;
@@ -1921,14 +1917,14 @@ static void cmdloop(void)
                 /* if we've already done SASL fail */
                 if (imapd_userid != NULL) {
                     prot_printf(imapd_out,
-               "%s BAD Can't Starttls after authentication\r\n", tag.s);
+               "%s BAD Can't Starttls after authentication\r\n", buf_s(&tag));
                     continue;
                 }
 
                 /* if we've already done COMPRESS fail */
                 if (imapd_compress_done == 1) {
                     prot_printf(imapd_out,
-               "%s BAD Can't Starttls after Compress\r\n", tag.s);
+               "%s BAD Can't Starttls after Compress\r\n", buf_s(&tag));
                     continue;
                 }
 
@@ -1936,50 +1932,50 @@ static void cmdloop(void)
                 if (imapd_starttls_done == 1) {
                     prot_printf(imapd_out,
                                 "%s BAD Already did a successful Starttls\r\n",
-                                tag.s);
+                                buf_s(&tag));
                     continue;
                 }
-                cmd_starttls(tag.s, 0);
+                cmd_starttls(buf_s(&tag), 0);
 
                 prometheus_increment(CYRUS_IMAP_STARTTLS_TOTAL);
                 continue;
             }
             if (!imapd_userid) {
                 goto nologin;
-            } else if (!strcmp(cmd.s, "Store")) {
+            } else if (!strcmp(buf_s(&cmd), "Store")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             store:
                 c = getword(imapd_in, &arg1);
-                if (c != ' ' || !imparse_issequence(arg1.s)) goto badsequence;
+                if (c != ' ' || !imparse_issequence(buf_s(&arg1))) goto badsequence;
 
-                cmd_store(tag.s, arg1.s, usinguid);
+                cmd_store(buf_s(&tag), buf_s(&arg1), usinguid);
 
                 prometheus_increment(CYRUS_IMAP_STORE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Select")) {
+            else if (!strcmp(buf_s(&cmd), "Select")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 prot_ungetc(c, imapd_in);
 
-                cmd_select(tag.s, cmd.s, arg1.s);
+                cmd_select(buf_s(&tag), buf_s(&cmd), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_SELECT_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Search")) {
+            else if (!strcmp(buf_s(&cmd), "Search")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             search:
 
-                cmd_search(tag.s, usinguid);
+                cmd_search(buf_s(&tag), usinguid);
 
                 prometheus_increment(CYRUS_IMAP_SEARCH_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Subscribe")) {
+            else if (!strcmp(buf_s(&cmd), "Subscribe")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 havenamespace = 0;
@@ -1991,14 +1987,14 @@ static void cmdloop(void)
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
                 if (havenamespace) {
-                    cmd_changesub(tag.s, arg1.s, arg2.s, 1);
+                    cmd_changesub(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), 1);
                 }
                 else {
-                    cmd_changesub(tag.s, (char *)0, arg1.s, 1);
+                    cmd_changesub(buf_s(&tag), (char *)0, buf_s(&arg1), 1);
                 }
                 prometheus_increment(CYRUS_IMAP_SUBSCRIBE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Setacl")) {
+            else if (!strcmp(buf_s(&cmd), "Setacl")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -2008,57 +2004,57 @@ static void cmdloop(void)
                 c = getastring(imapd_in, imapd_out, &arg3);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_setacl(tag.s, arg1.s, arg2.s, arg3.s);
+                cmd_setacl(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), buf_s(&arg3));
 
                 prometheus_increment(CYRUS_IMAP_SETACL_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Setannotation")) {
+            else if (!strcmp(buf_s(&cmd), "Setannotation")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
 
-                cmd_setannotation(tag.s, arg1.s);
+                cmd_setannotation(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_SETANNOTATION_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Setmetadata")) {
+            else if (!strcmp(buf_s(&cmd), "Setmetadata")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
 
-                cmd_setmetadata(tag.s, arg1.s);
+                cmd_setmetadata(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_SETMETADATA_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Setquota")) {
+            else if (!strcmp(buf_s(&cmd), "Setquota")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
-                cmd_setquota(tag.s, arg1.s);
+                cmd_setquota(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_SETQUOTA_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Sort")) {
+            else if (!strcmp(buf_s(&cmd), "Sort")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             sort:
-                cmd_sort(tag.s, usinguid);
+                cmd_sort(buf_s(&tag), usinguid);
 
                 prometheus_increment(CYRUS_IMAP_SORT_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Status")) {
+            else if (!strcmp(buf_s(&cmd), "Status")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c != ' ') goto missingargs;
-                cmd_status(tag.s, arg1.s);
+                cmd_status(buf_s(&tag), buf_s(&arg1));
 
                 prometheus_increment(CYRUS_IMAP_STATUS_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Scan")) {
+            else if (!strcmp(buf_s(&cmd), "Scan")) {
                 struct listargs listargs;
 
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -2069,51 +2065,51 @@ static void cmdloop(void)
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
                 memset(&listargs, 0, sizeof(struct listargs));
-                listargs.ref = arg1.s;
-                strarray_append(&listargs.pat, arg2.s);
-                listargs.scan = arg3.s;
+                listargs.ref = buf_s(&arg1);
+                strarray_append(&listargs.pat, buf_s(&arg2));
+                listargs.scan = buf_s(&arg3);
 
-                cmd_list(tag.s, &listargs);
+                cmd_list(buf_s(&tag), &listargs);
 
                 prometheus_increment(CYRUS_IMAP_SCAN_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Syncapply")) {
+            else if (!strcmp(buf_s(&cmd), "Syncapply")) {
                 if (!imapd_userisadmin) goto badcmd;
 
                 struct dlist *kl = sync_parseline(imapd_in);
 
                 if (kl) {
-                    cmd_syncapply(tag.s, kl, reserve_list);
+                    cmd_syncapply(buf_s(&tag), kl, reserve_list);
                     dlist_free(&kl);
                 }
                 else goto badrepl;
             }
-            else if (!strcmp(cmd.s, "Syncget")) {
+            else if (!strcmp(buf_s(&cmd), "Syncget")) {
                 if (!imapd_userisadmin) goto badcmd;
 
                 struct dlist *kl = sync_parseline(imapd_in);
 
                 if (kl) {
-                    cmd_syncget(tag.s, kl);
+                    cmd_syncget(buf_s(&tag), kl);
                     dlist_free(&kl);
                 }
                 else goto badrepl;
             }
-            else if (!strcmp(cmd.s, "Syncrestart")) {
+            else if (!strcmp(buf_s(&cmd), "Syncrestart")) {
                 if (!imapd_userisadmin) goto badcmd;
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
                 /* just clear the GUID cache */
-                cmd_syncrestart(tag.s, &reserve_list, 1);
+                cmd_syncrestart(buf_s(&tag), &reserve_list, 1);
             }
-            else if (!strcmp(cmd.s, "Syncrestore")) {
+            else if (!strcmp(buf_s(&cmd), "Syncrestore")) {
                 if (!imapd_userisadmin) goto badcmd;
 
                 struct dlist *kl = sync_parseline(imapd_in);
 
                 if (kl) {
-                    cmd_syncrestore(tag.s, kl, reserve_list);
+                    cmd_syncrestore(buf_s(&tag), kl, reserve_list);
                     dlist_free(&kl);
                 }
                 else goto badrepl;
@@ -2122,12 +2118,12 @@ static void cmdloop(void)
             break;
 
         case 'T':
-            if (!strcmp(cmd.s, "Thread")) {
+            if (!strcmp(buf_s(&cmd), "Thread")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             thread:
-                cmd_thread(tag.s, usinguid);
+                cmd_thread(buf_s(&tag), usinguid);
 
                 prometheus_increment(CYRUS_IMAP_THREAD_TOTAL);
             }
@@ -2135,70 +2131,70 @@ static void cmdloop(void)
             break;
 
         case 'U':
-            if (!strcmp(cmd.s, "Uid")) {
+            if (!strcmp(buf_s(&cmd), "Uid")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 1;
                 if (c != ' ') goto missingargs;
                 c = getword(imapd_in, &arg1);
                 if (c != ' ') goto missingargs;
-                lcase(arg1.s);
-                xstrncpy(cmdname, arg1.s, 99);
-                if (!strcmp(arg1.s, "fetch")) {
+                buf_lcase(&arg1);
+                xstrncpy(cmdname, buf_s(&arg1), 99);
+                if (!strcmp(buf_s(&arg1), "fetch")) {
                     goto fetch;
                 }
-                else if (!strcmp(arg1.s, "store")) {
+                else if (!strcmp(buf_s(&arg1), "store")) {
                     if (readonly) goto noreadonly;
                     goto store;
                 }
-                else if (!strcmp(arg1.s, "search")) {
+                else if (!strcmp(buf_s(&arg1), "search")) {
                     goto search;
                 }
-                else if (!strcmp(arg1.s, "sort")) {
+                else if (!strcmp(buf_s(&arg1), "sort")) {
                     goto sort;
                 }
-                else if (!strcmp(arg1.s, "thread")) {
+                else if (!strcmp(buf_s(&arg1), "thread")) {
                     goto thread;
                 }
-                else if (!strcmp(arg1.s, "copy")) {
+                else if (!strcmp(buf_s(&arg1), "copy")) {
                     if (readonly) goto noreadonly;
                     goto copy;
                 }
-                else if (!strcmp(arg1.s, "move")) {
+                else if (!strcmp(buf_s(&arg1), "move")) {
                     if (readonly) goto noreadonly;
                     goto move;
                 }
-                else if (!strcmp(arg1.s, "xmove")) {
+                else if (!strcmp(buf_s(&arg1), "xmove")) {
                     if (readonly) goto noreadonly;
                     goto move;
                 }
-                else if (!strcmp(arg1.s, "expunge")) {
+                else if (!strcmp(buf_s(&arg1), "expunge")) {
                     if (readonly) goto noreadonly;
                     c = getword(imapd_in, &arg1);
-                    if (!imparse_issequence(arg1.s)) goto badsequence;
+                    if (!imparse_issequence(buf_s(&arg1))) goto badsequence;
                     if (!IS_EOL(c, imapd_in)) goto extraargs;
-                    cmd_expunge(tag.s, arg1.s);
+                    cmd_expunge(buf_s(&tag), buf_s(&arg1));
 
                     prometheus_increment(CYRUS_IMAP_EXPUNGE_TOTAL);
                 }
-                else if (!strcmp(arg1.s, "xrunannotator")) {
+                else if (!strcmp(buf_s(&arg1), "xrunannotator")) {
                     if (readonly) goto noreadonly;
                     goto xrunannotator;
                 }
                 else {
-                    prot_printf(imapd_out, "%s BAD Unrecognized UID subcommand\r\n", tag.s);
+                    prot_printf(imapd_out, "%s BAD Unrecognized UID subcommand\r\n", buf_s(&tag));
                     eatline(imapd_in, c);
                 }
             }
-            else if (!strcmp(cmd.s, "Unauthenticate")) {
+            else if (!strcmp(buf_s(&cmd), "Unauthenticate")) {
                 if (!imapd_userisadmin) goto badcmd;
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_unauthenticate(tag.s);
+                cmd_unauthenticate(buf_s(&tag));
 
                 prometheus_increment(CYRUS_IMAP_UNAUTHENTICATE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Unsubscribe")) {
+            else if (!strcmp(buf_s(&cmd), "Unsubscribe")) {
                 if (readonly) goto noreadonly;
                 if (c != ' ') goto missingargs;
                 havenamespace = 0;
@@ -2210,23 +2206,23 @@ static void cmdloop(void)
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
                 if (havenamespace) {
-                    cmd_changesub(tag.s, arg1.s, arg2.s, 0);
+                    cmd_changesub(buf_s(&tag), buf_s(&arg1), buf_s(&arg2), 0);
                 }
                 else {
-                    cmd_changesub(tag.s, (char *)0, arg1.s, 0);
+                    cmd_changesub(buf_s(&tag), (char *)0, buf_s(&arg1), 0);
                 }
 
                 prometheus_increment(CYRUS_IMAP_UNSUBSCRIBE_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Unselect")) {
+            else if (!strcmp(buf_s(&cmd), "Unselect")) {
                 if (!imapd_index && !backend_current) goto nomailbox;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_close(tag.s, cmd.s);
+                cmd_close(buf_s(&tag), buf_s(&cmd));
 
                 prometheus_increment(CYRUS_IMAP_UNSELECT_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Undump")) {
+            else if (!strcmp(buf_s(&cmd), "Undump")) {
                 if (readonly) goto noreadonly;
                 if(c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
@@ -2234,14 +2230,14 @@ static void cmdloop(void)
                 /* we want to get a list at this point */
                 if(c != ' ') goto missingargs;
 
-                cmd_undump(tag.s, arg1.s);
+                cmd_undump(buf_s(&tag), buf_s(&arg1));
                 /* XXX prometheus_increment(CYRUS_IMAP_UNDUMP_TOTAL); */
             }
 #ifdef HAVE_SSL
-            else if (!strcmp(cmd.s, "Urlfetch")) {
+            else if (!strcmp(buf_s(&cmd), "Urlfetch")) {
                 if (c != ' ') goto missingargs;
 
-                cmd_urlfetch(tag.s);
+                cmd_urlfetch(buf_s(&tag));
                 /* XXX prometheus_increment(CYRUS_IMAP_URLFETCH_TOTAL); */
             }
 #endif
@@ -2249,7 +2245,7 @@ static void cmdloop(void)
             break;
 
         case 'X':
-            if (!strcmp(cmd.s, "Xbackup")) {
+            if (!strcmp(buf_s(&cmd), "Xbackup")) {
                 if (readonly) goto noreadonly;
                 int havechannel = 0;
 
@@ -2269,37 +2265,37 @@ static void cmdloop(void)
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_xbackup(tag.s, arg1.s, havechannel ? arg2.s : NULL);
+                cmd_xbackup(buf_s(&tag), buf_s(&arg1), havechannel ? buf_s(&arg2) : NULL);
 
                 prometheus_increment(CYRUS_IMAP_XBACKUP_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Xconvfetch")) {
-                cmd_xconvfetch(tag.s);
+            else if (!strcmp(buf_s(&cmd), "Xconvfetch")) {
+                cmd_xconvfetch(buf_s(&tag));
 
                 /* XXX prometheus_increment(CYRUS_IMAP_XCONVFETCH_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xconvmultisort")) {
+            else if (!strcmp(buf_s(&cmd), "Xconvmultisort")) {
                 if (c != ' ') goto missingargs;
                 if (!imapd_index && !backend_current) goto nomailbox;
-                cmd_xconvmultisort(tag.s);
+                cmd_xconvmultisort(buf_s(&tag));
 
                 /* XXX prometheus_increment(CYRUS_IMAP_XCONVMULTISORT_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xconvsort")) {
+            else if (!strcmp(buf_s(&cmd), "Xconvsort")) {
                 if (c != ' ') goto missingargs;
                 if (!imapd_index && !backend_current) goto nomailbox;
-                cmd_xconvsort(tag.s, 0);
+                cmd_xconvsort(buf_s(&tag), 0);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_XCONVSORT_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xconvupdates")) {
+            else if (!strcmp(buf_s(&cmd), "Xconvupdates")) {
                 if (c != ' ') goto missingargs;
                 if (!imapd_index && !backend_current) goto nomailbox;
-                cmd_xconvsort(tag.s, 1);
+                cmd_xconvsort(buf_s(&tag), 1);
 
                 /* XXX prometheus_increment(CYRUS_IMAP_XCONVUPDATES_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xfer")) {
+            else if (!strcmp(buf_s(&cmd), "Xfer")) {
                 if (readonly) goto noreadonly;
                 int havepartition = 0;
 
@@ -2314,20 +2310,20 @@ static void cmdloop(void)
                 if(c == ' ') {
                     /* Dest Partition */
                     c = getastring(imapd_in, imapd_out, &arg3);
-                    if (!imparse_isatom(arg3.s)) goto badpartition;
+                    if (!imparse_isatom(buf_s(&arg3))) goto badpartition;
                     havepartition = 1;
                 }
 
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
 
-                cmd_xfer(tag.s, arg1.s, arg2.s,
-                         (havepartition ? arg3.s : NULL));
+                cmd_xfer(buf_s(&tag), buf_s(&arg1), buf_s(&arg2),
+                         (havepartition ? buf_s(&arg3) : NULL));
                 /* XXX prometheus_increment(CYRUS_IMAP_XFER_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xconvmeta")) {
-                cmd_xconvmeta(tag.s);
+            else if (!strcmp(buf_s(&cmd), "Xconvmeta")) {
+                cmd_xconvmeta(buf_s(&tag));
             }
-            else if (!strcmp(cmd.s, "Xlist")) {
+            else if (!strcmp(buf_s(&cmd), "Xlist")) {
                 struct listargs listargs;
 
                 if (c != ' ') goto missingargs;
@@ -2335,67 +2331,67 @@ static void cmdloop(void)
                 memset(&listargs, 0, sizeof(struct listargs));
                 listargs.cmd = LIST_CMD_XLIST;
                 listargs.ret = LIST_RET_CHILDREN | LIST_RET_SPECIALUSE;
-                getlistargs(tag.s, &listargs);
-                if (listargs.pat.count) cmd_list(tag.s, &listargs);
+                getlistargs(buf_s(&tag), &listargs);
+                if (listargs.pat.count) cmd_list(buf_s(&tag), &listargs);
 
                 prometheus_increment(CYRUS_IMAP_LIST_TOTAL);
             }
-            else if (!strcmp(cmd.s, "Xmove")) {
+            else if (!strcmp(buf_s(&cmd), "Xmove")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
                 goto move;
             }
-            else if (!strcmp(cmd.s, "Xrunannotator")) {
+            else if (!strcmp(buf_s(&cmd), "Xrunannotator")) {
                 if (readonly) goto noreadonly;
                 if (!imapd_index && !backend_current) goto nomailbox;
                 usinguid = 0;
                 if (c != ' ') goto missingargs;
             xrunannotator:
                 c = getword(imapd_in, &arg1);
-                if (!arg1.len || !imparse_issequence(arg1.s)) goto badsequence;
+                if (!buf_len(&arg1) || !imparse_issequence(buf_s(&arg1))) goto badsequence;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_xrunannotator(tag.s, arg1.s, usinguid);
+                cmd_xrunannotator(buf_s(&tag), buf_s(&arg1), usinguid);
                 /* XXX prometheus_increment(CYRUS_IMAP_XRUNANNOTATOR_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xsnippets")) {
+            else if (!strcmp(buf_s(&cmd), "Xsnippets")) {
                 if (c != ' ') goto missingargs;
                 if (!imapd_index && !backend_current) goto nomailbox;
-                cmd_xsnippets(tag.s);
+                cmd_xsnippets(buf_s(&tag));
 
                 /* XXX prometheus_increment(CYRUS_IMAP_XSNIPPETS_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xstats")) {
+            else if (!strcmp(buf_s(&cmd), "Xstats")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_xstats(tag.s);
+                cmd_xstats(buf_s(&tag));
             }
-            else if (!strcmp(cmd.s, "Xwarmup")) {
+            else if (!strcmp(buf_s(&cmd), "Xwarmup")) {
                 /* XWARMUP doesn't need a mailbox to be selected */
                 if (c != ' ') goto missingargs;
-                cmd_xwarmup(tag.s);
+                cmd_xwarmup(buf_s(&tag));
                 /* XXX prometheus_increment(CYRUS_IMAP_XWARMUP_TOTAL); */
             }
-            else if (!strcmp(cmd.s, "Xkillmy")) {
+            else if (!strcmp(buf_s(&cmd), "Xkillmy")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_xkillmy(tag.s, arg1.s);
+                cmd_xkillmy(buf_s(&tag), buf_s(&arg1));
             }
-            else if (!strcmp(cmd.s, "Xforever")) {
+            else if (!strcmp(buf_s(&cmd), "Xforever")) {
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_xforever(tag.s);
+                cmd_xforever(buf_s(&tag));
             }
-            else if (!strcmp(cmd.s, "Xmeid")) {
+            else if (!strcmp(buf_s(&cmd), "Xmeid")) {
                 if (c != ' ') goto missingargs;
                 c = getastring(imapd_in, imapd_out, &arg1);
                 if (c == EOF) goto missingargs;
                 if (!IS_EOL(c, imapd_in)) goto extraargs;
-                cmd_xmeid(tag.s, arg1.s);
+                cmd_xmeid(buf_s(&tag), buf_s(&arg1));
             }
 
-            else if (apns_enabled && !strcmp(cmd.s, "Xapplepushservice")) {
+            else if (apns_enabled && !strcmp(buf_s(&cmd), "Xapplepushservice")) {
                 if (c != ' ') goto missingargs;
 
                 memset(&applepushserviceargs, 0, sizeof(struct applepushserviceargs));
@@ -2404,7 +2400,7 @@ static void cmdloop(void)
                     c = getastring(imapd_in, imapd_out, &arg1);
                     if (c == EOF) goto aps_missingargs;
 
-                    if (!strcmp(arg1.s, "mailboxes")) {
+                    if (!strcmp(buf_s(&arg1), "mailboxes")) {
                         c = prot_getc(imapd_in);
                         if (c != '(')
                             goto aps_missingargs;
@@ -2415,7 +2411,7 @@ static void cmdloop(void)
                             do {
                                 c = getastring(imapd_in, imapd_out, &arg2);
                                 if (c == EOF) break;
-                                strarray_push(&applepushserviceargs.mailboxes, arg2.s);
+                                strarray_push(&applepushserviceargs.mailboxes, buf_s(&arg2));
                             } while (c == ' ');
                         }
 
@@ -2428,15 +2424,15 @@ static void cmdloop(void)
                         c = getastring(imapd_in, imapd_out, &arg2);
 
                         // regular key/value
-                        if (!strcmp(arg1.s, "aps-version")) {
-                            if (!imparse_isnumber(arg2.s)) goto aps_extraargs;
-                            applepushserviceargs.aps_version = atoi(arg2.s);
+                        if (!strcmp(buf_s(&arg1), "aps-version")) {
+                            if (!imparse_isnumber(buf_s(&arg2))) goto aps_extraargs;
+                            applepushserviceargs.aps_version = atoi(buf_s(&arg2));
                         }
-                        else if (!strcmp(arg1.s, "aps-account-id"))
+                        else if (!strcmp(buf_s(&arg1), "aps-account-id"))
                             buf_copy(&applepushserviceargs.aps_account_id, &arg2);
-                        else if (!strcmp(arg1.s, "aps-device-token"))
+                        else if (!strcmp(buf_s(&arg1), "aps-device-token"))
                             buf_copy(&applepushserviceargs.aps_device_token, &arg2);
-                        else if (!strcmp(arg1.s, "aps-subtopic"))
+                        else if (!strcmp(buf_s(&arg1), "aps-subtopic"))
                             buf_copy(&applepushserviceargs.aps_subtopic, &arg2);
                         else
                             goto aps_extraargs;
@@ -2445,7 +2441,7 @@ static void cmdloop(void)
 
                 if (!IS_EOL(c, imapd_in)) goto aps_extraargs;
 
-                cmd_xapplepushservice(tag.s, &applepushserviceargs);
+                cmd_xapplepushservice(buf_s(&tag), &applepushserviceargs);
             }
 
             else goto badcmd;
@@ -2453,7 +2449,7 @@ static void cmdloop(void)
 
         default:
         badcmd:
-            prot_printf(imapd_out, "%s BAD Unrecognized command\r\n", tag.s);
+            prot_printf(imapd_out, "%s BAD Unrecognized command\r\n", buf_s(&tag));
             eatline(imapd_in, c);
         }
 
@@ -2477,18 +2473,18 @@ static void cmdloop(void)
         continue;
 
     nologin:
-        prot_printf(imapd_out, "%s BAD Please login first\r\n", tag.s);
+        prot_printf(imapd_out, "%s BAD Please login first\r\n", buf_s(&tag));
         eatline(imapd_in, c);
         continue;
 
     nomailbox:
         prot_printf(imapd_out,
-                    "%s BAD Please select a mailbox first\r\n", tag.s);
+                    "%s BAD Please select a mailbox first\r\n", buf_s(&tag));
         eatline(imapd_in, c);
         continue;
 
     noreadonly:
-        prot_printf(imapd_out, "%s NO %s\r\n", tag.s,
+        prot_printf(imapd_out, "%s NO %s\r\n", buf_s(&tag),
                     error_message(IMAP_CONNECTION_READONLY));
         eatline(imapd_in, c);
         continue;
@@ -2501,7 +2497,7 @@ static void cmdloop(void)
 
     missingargs:
         prot_printf(imapd_out,
-                    "%s BAD Missing required argument to %s\r\n", tag.s, cmd.s);
+                    "%s BAD Missing required argument to %s\r\n", buf_s(&tag), buf_s(&cmd));
         eatline(imapd_in, c);
         continue;
 
@@ -2513,25 +2509,25 @@ static void cmdloop(void)
 
     extraargs:
         prot_printf(imapd_out,
-                    "%s BAD Unexpected extra arguments to %s\r\n", tag.s, cmd.s);
+                    "%s BAD Unexpected extra arguments to %s\r\n", buf_s(&tag), buf_s(&cmd));
         eatline(imapd_in, c);
         continue;
 
     badsequence:
         prot_printf(imapd_out,
-                    "%s BAD Invalid sequence in %s\r\n", tag.s, cmd.s);
+                    "%s BAD Invalid sequence in %s\r\n", buf_s(&tag), buf_s(&cmd));
         eatline(imapd_in, c);
         continue;
 
     badpartition:
         prot_printf(imapd_out,
-                    "%s BAD Invalid partition name in %s\r\n", tag.s, cmd.s);
+                    "%s BAD Invalid partition name in %s\r\n", buf_s(&tag), buf_s(&cmd));
         eatline(imapd_in, c);
         continue;
 
     badrepl:
         prot_printf(imapd_out,
-                    "%s BAD Replication parse failure in %s\r\n", tag.s, cmd.s);
+                    "%s BAD Replication parse failure in %s\r\n", buf_s(&tag), buf_s(&cmd));
         /* n.b. sync_parseline already ate the bad line */
         continue;
     }
@@ -2696,7 +2692,7 @@ static void cmd_login(char *tag, char *user)
         return;
     }
 
-    passwd = passwdbuf.s;
+    passwd = buf_s(&passwdbuf);
 
     if (is_userid_anonymous(canon_user)) {
         if (config_getswitch(IMAPOPT_ALLOWANONYMOUSLOGIN)) {
@@ -3085,7 +3081,7 @@ static void cmd_id(char *tag)
     /* ok, accept parameter list */
     c = getword(imapd_in, &arg);
     /* check for "NIL" or start of parameter list */
-    if (strcasecmp(arg.s, "NIL") && c != '(') {
+    if (strcasecmp(buf_s(&arg), "NIL") && c != '(') {
         prot_printf(imapd_out, "%s BAD Invalid parameter list in Id\r\n", tag);
         eatline(imapd_in, c);
         return;
@@ -3120,14 +3116,14 @@ static void cmd_id(char *tag)
             }
 
             /* ok, we're anal, but we'll still process the ID command */
-            if (strlen(field.s) > MAXIDFIELDLEN) {
+            if (strlen(buf_s(&field)) > MAXIDFIELDLEN) {
                 prot_printf(imapd_out,
                             "%s BAD field longer than %u octets in Id\r\n",
                             tag, MAXIDFIELDLEN);
                 eatline(imapd_in, c);
                 return;
             }
-            if (arg.len > MAXIDVALUELEN) {
+            if (buf_len(&arg) > MAXIDVALUELEN) {
                 prot_printf(imapd_out,
                             "%s BAD value longer than %u octets in Id\r\n",
                             tag, MAXIDVALUELEN);
@@ -3142,12 +3138,12 @@ static void cmd_id(char *tag)
                 return;
             }
 
-            if (!strcmp(field.s, "os") && !strcmp(arg.s, "iOS")) {
+            if (!strcmp(buf_s(&field), "os") && !strcmp(buf_s(&arg), "iOS")) {
                 imapd_id.quirks |= QUIRK_SEARCHFUZZY;
             }
 
             /* ok, we're happy enough */
-            appendattvalue(&imapd_id.params, field.s, &arg);
+            appendattvalue(&imapd_id.params, buf_s(&field), &arg);
         }
 
         if (c != ')') {
@@ -3415,7 +3411,7 @@ static void cmd_idle(char *tag)
     imapd_check(NULL, 1);
 
     if (c != EOF) {
-        if (!strcasecmp(arg.s, "Done") && IS_EOL(c, imapd_in)) {
+        if (!strcasecmp(buf_s(&arg), "Done") && IS_EOL(c, imapd_in)) {
             prot_printf(imapd_out, "%s OK %s\r\n", tag,
                         error_message(IMAP_OK_COMPLETED));
         }
@@ -3622,7 +3618,7 @@ static int catenate_text(FILE *f, size_t maxsize, unsigned *totalsize, int *bina
     c = getword(imapd_in, &arg);
 
     /* Read size from literal */
-    r = getliteralsize(arg.s, c, maxsize - *totalsize, &size, binary, parseerr);
+    r = getliteralsize(buf_s(&arg), c, maxsize - *totalsize, &size, binary, parseerr);
     if (r) return r;
 
     /* Catenate message part to stage */
@@ -3782,7 +3778,7 @@ static int append_catenate(FILE *f, const char *cur_name, size_t maxsize, unsign
             return IMAP_PROTOCOL_ERROR;
         }
 
-        if (!strcasecmp(arg.s, "TEXT")) {
+        if (!strcasecmp(buf_s(&arg), "TEXT")) {
             int r1 = catenate_text(f, maxsize, totalsize, binary, parseerr);
             if (r1) return r1;
 
@@ -3791,7 +3787,7 @@ static int append_catenate(FILE *f, const char *cur_name, size_t maxsize, unsign
             /* Parse newline terminating command */
             c = prot_getc(imapd_in);
         }
-        else if (!strcasecmp(arg.s, "URL")) {
+        else if (!strcasecmp(buf_s(&arg), "URL")) {
             c = getastring(imapd_in, imapd_out, &arg);
             if (c != ' ' && c != ')') {
                 *parseerr = "Missing URL in Append command";
@@ -3799,9 +3795,9 @@ static int append_catenate(FILE *f, const char *cur_name, size_t maxsize, unsign
             }
 
             if (!r) {
-                r = catenate_url(arg.s, cur_name, f, maxsize, totalsize, parseerr);
+                r = catenate_url(buf_s(&arg), cur_name, f, maxsize, totalsize, parseerr);
                 if (r) {
-                    *url = arg.s;
+                    *url = buf_s(&arg);
                     return r;
                 }
             }
@@ -3940,17 +3936,17 @@ static void cmd_append(char *tag, char *name, const char *cur_name)
 
         /* Parse flags */
         c = getword(imapd_in, &arg);
-        if  (c == '(' && !arg.s[0]) {
+        if  (c == '(' && !buf_s(&arg)[0]) {
             strarray_init(&curstage->flags);
             do {
                 c = getword(imapd_in, &arg);
-                if (!curstage->flags.count && !arg.s[0] && c == ')') break; /* empty list */
-                if (!isokflag(arg.s, &sync_seen)) {
+                if (!curstage->flags.count && !buf_s(&arg)[0] && c == ')') break; /* empty list */
+                if (!isokflag(buf_s(&arg), &sync_seen)) {
                     parseerr = "Invalid flag in Append command";
                     r = IMAP_PROTOCOL_ERROR;
                     goto done;
                 }
-                strarray_append(&curstage->flags, arg.s);
+                strarray_append(&curstage->flags, buf_s(&arg));
             } while (c == ' ');
             if (c != ')') {
                 parseerr =
@@ -3968,7 +3964,7 @@ static void cmd_append(char *tag, char *name, const char *cur_name)
         }
 
         /* Parse internaldate */
-        if (c == '\"' && !arg.s[0]) {
+        if (c == '\"' && !buf_s(&arg)[0]) {
             prot_ungetc(c, imapd_in);
             c = getdatetime(&(curstage->internaldate));
             if (c != ' ') {
@@ -3981,7 +3977,7 @@ static void cmd_append(char *tag, char *name, const char *cur_name)
 
         /* try to parse a sequence of "append-ext" */
         for (;;) {
-            if (!strcasecmp(arg.s, "ANNOTATION")) {
+            if (!strcasecmp(buf_s(&arg), "ANNOTATION")) {
                 /* RFC 5257 */
                 if (c != ' ') {
                     parseerr = "Missing annotation data in Append command";
@@ -4011,7 +4007,7 @@ static void cmd_append(char *tag, char *name, const char *cur_name)
 
         /* now parsing "append-data" in the ABNF */
 
-        if (!strcasecmp(arg.s, "CATENATE")) {
+        if (!strcasecmp(buf_s(&arg), "CATENATE")) {
             if (c != ' ' || (c = prot_getc(imapd_in) != '(')) {
                 parseerr = "Missing message part(s) in Append command";
                 r = IMAP_PROTOCOL_ERROR;
@@ -4026,7 +4022,7 @@ static void cmd_append(char *tag, char *name, const char *cur_name)
         }
         else {
             /* Read size from literal */
-            r = getliteralsize(arg.s, c, maxsize, &size, &(curstage->binary), &parseerr);
+            r = getliteralsize(buf_s(&arg), c, maxsize, &size, &(curstage->binary), &parseerr);
             if (!r && size == 0) r = IMAP_ZERO_LENGTH_LITERAL;
             if (r) goto done;
 
@@ -4233,7 +4229,7 @@ static void warn_about_quota(const char *quotaroot)
                            pc_usage, quota_names[res]);
         }
 
-        if (msg.len)
+        if (buf_len(&msg))
             prot_printf(imapd_out, "* NO [ALERT] %s\r\n", buf_cstring(&msg));
     }
 
@@ -4268,21 +4264,21 @@ static void cmd_select(char *tag, char *cmd, char *name)
         if (c != '(') goto badlist;
 
         c = getword(imapd_in, &arg);
-        if (arg.s[0] == '\0') goto badlist;
+        if (buf_s(&arg)[0] == '\0') goto badlist;
         for (;;) {
-            ucase(arg.s);
-            if (!strcmp(arg.s, "CONDSTORE")) {
+            buf_ucase(&arg);
+            if (!strcmp(buf_s(&arg), "CONDSTORE")) {
                 client_capa |= CAPA_CONDSTORE;
             }
             else if ((client_capa & CAPA_QRESYNC) &&
-                     !strcmp(arg.s, "QRESYNC")) {
+                     !strcmp(buf_s(&arg), "QRESYNC")) {
                 char *p;
 
                 if (c != ' ') goto badqresync;
                 c = prot_getc(imapd_in);
                 if (c != '(') goto badqresync;
                 c = getastring(imapd_in, imapd_out, &arg);
-                v->uidvalidity = strtoul(arg.s, &p, 10);
+                v->uidvalidity = strtoul(buf_s(&arg), &p, 10);
                 if (*p || !v->uidvalidity || v->uidvalidity == ULONG_MAX) goto badqresync;
                 if (c != ' ') goto badqresync;
                 c = getmodseq(imapd_in, &v->modseq);
@@ -4293,8 +4289,8 @@ static void cmd_select(char *tag, char *cmd, char *name)
                         /* optional UID sequence */
                         prot_ungetc(c, imapd_in);
                         c = getword(imapd_in, &arg);
-                        if (!imparse_issequence(arg.s)) goto badqresync;
-                        v->sequence = arg.s;
+                        if (!imparse_issequence(buf_s(&arg))) goto badqresync;
+                        v->sequence = buf_s(&arg);
                         if (c == ' ') {
                             c = prot_getc(imapd_in);
                             if (c != '(') goto badqresync;
@@ -4303,12 +4299,12 @@ static void cmd_select(char *tag, char *cmd, char *name)
                     if (c == '(') {
                         /* optional sequence match data */
                         c = getword(imapd_in, &parm1);
-                        if (!imparse_issequence(parm1.s)) goto badqresync;
-                        v->match_seq = parm1.s;
+                        if (!imparse_issequence(buf_s(&parm1))) goto badqresync;
+                        v->match_seq = buf_s(&parm1);
                         if (c != ' ') goto badqresync;
                         c = getword(imapd_in, &parm2);
-                        if (!imparse_issequence(parm2.s)) goto badqresync;
-                        v->match_uid = parm2.s;
+                        if (!imparse_issequence(buf_s(&parm2))) goto badqresync;
+                        v->match_uid = buf_s(&parm2);
                         if (c != ')') goto badqresync;
                         c = prot_getc(imapd_in);
                     }
@@ -4316,7 +4312,7 @@ static void cmd_select(char *tag, char *cmd, char *name)
                 if (c != ')') goto badqresync;
                 c = prot_getc(imapd_in);
             }
-            else if (!strcmp(arg.s, "ANNOTATE")) {
+            else if (!strcmp(buf_s(&arg), "ANNOTATE")) {
                 /*
                  * RFC 5257 requires us to parse this keyword, which
                  * indicates that the client wants unsolicited
@@ -4325,12 +4321,12 @@ static void cmd_select(char *tag, char *cmd, char *name)
                  */
                 ;
             }
-            else if (allowdeleted && !strcmp(arg.s, "VENDOR.CMU-INCLUDE-EXPUNGED")) {
+            else if (allowdeleted && !strcmp(buf_s(&arg), "VENDOR.CMU-INCLUDE-EXPUNGED")) {
                 init.want_expunged = 1;
             }
             else {
                 prot_printf(imapd_out, "%s BAD Invalid %s modifier %s\r\n",
-                            tag, cmd, arg.s);
+                            tag, cmd, buf_s(&arg));
                 eatline(imapd_in, c);
                 return;
             }
@@ -4641,18 +4637,18 @@ static int parse_fetch_args(const char *tag, const char *cmd,
     strarray_t *newfields = strarray_new();
 
     c = getword(imapd_in, &fetchatt);
-    if (c == '(' && !fetchatt.s[0]) {
+    if (c == '(' && !buf_s(&fetchatt)[0]) {
         inlist = 1;
         c = getword(imapd_in, &fetchatt);
     }
     for (;;) {
-        ucase(fetchatt.s);
-        switch (fetchatt.s[0]) {
+        buf_ucase(&fetchatt);
+        switch (buf_s(&fetchatt)[0]) {
         case 'A':
-            if (!inlist && !strcmp(fetchatt.s, "ALL")) {
+            if (!inlist && !strcmp(buf_s(&fetchatt), "ALL")) {
                 fa->fetchitems |= FETCH_ALL;
             }
-            else if (!strcmp(fetchatt.s, "ANNOTATION")) {
+            else if (!strcmp(buf_s(&fetchatt), "ANNOTATION")) {
                 fa->fetchitems |= FETCH_ANNOTATION;
                 if (c != ' ')
                     goto badannotation;
@@ -4679,16 +4675,16 @@ badannotation:
             break;
 
         case 'B':
-            if (!strcmp(fetchatt.s, "BASECID") &&
+            if (!strcmp(buf_s(&fetchatt), "BASECID") &&
                 config_getswitch(IMAPOPT_CONVERSATIONS)) {
                 fa->fetchitems |= FETCH_BASECID;
             }
-            else if (!strncmp(fetchatt.s, "BINARY[", 7) ||
-                !strncmp(fetchatt.s, "BINARY.PEEK[", 12) ||
-                !strncmp(fetchatt.s, "BINARY.SIZE[", 12)) {
+            else if (!strncmp(buf_s(&fetchatt), "BINARY[", 7) ||
+                !strncmp(buf_s(&fetchatt), "BINARY.PEEK[", 12) ||
+                !strncmp(buf_s(&fetchatt), "BINARY.SIZE[", 12)) {
                 int binsize = 0;
 
-                p = section = fetchatt.s + 7;
+                p = section = buf_s(&fetchatt) + 7;
                 if (!strncmp(p, "PEEK[", 5)) {
                     p = section += 5;
                 }
@@ -4727,15 +4723,15 @@ badannotation:
                 else
                     section_list_append(&fa->binsections, section, &oi);
             }
-            else if (!strcmp(fetchatt.s, "BODY")) {
+            else if (!strcmp(buf_s(&fetchatt), "BODY")) {
                 fa->fetchitems |= FETCH_BODY;
             }
-            else if (!strcmp(fetchatt.s, "BODYSTRUCTURE")) {
+            else if (!strcmp(buf_s(&fetchatt), "BODYSTRUCTURE")) {
                 fa->fetchitems |= FETCH_BODYSTRUCTURE;
             }
-            else if (!strncmp(fetchatt.s, "BODY[", 5) ||
-                     !strncmp(fetchatt.s, "BODY.PEEK[", 10)) {
-                p = section = fetchatt.s + 5;
+            else if (!strncmp(buf_s(&fetchatt), "BODY[", 5) ||
+                     !strncmp(buf_s(&fetchatt), "BODY.PEEK[", 10)) {
+                p = section = buf_s(&fetchatt) + 5;
                 if (!strncmp(p, "PEEK[", 5)) {
                     p = section += 5;
                 }
@@ -4764,49 +4760,49 @@ badannotation:
                     if (c != ' ') {
                         prot_printf(imapd_out,
                                     "%s BAD Missing required argument to %s %s\r\n",
-                                    tag, cmd, fetchatt.s);
+                                    tag, cmd, buf_s(&fetchatt));
                         eatline(imapd_in, c);
                         goto freeargs;
                     }
                     c = prot_getc(imapd_in);
                     if (c != '(') {
                         prot_printf(imapd_out, "%s BAD Missing required open parenthesis in %s %s\r\n",
-                                    tag, cmd, fetchatt.s);
+                                    tag, cmd, buf_s(&fetchatt));
                         eatline(imapd_in, c);
                         goto freeargs;
                     }
                     do {
                         c = getastring(imapd_in, imapd_out, &fieldname);
-                        for (p = fieldname.s; *p; p++) {
+                        for (p = buf_s(&fieldname); *p; p++) {
                             if (*p <= ' ' || *p & 0x80 || *p == ':') break;
                         }
-                        if (*p || !*fieldname.s) {
+                        if (*p || !*buf_s(&fieldname)) {
                             prot_printf(imapd_out, "%s BAD Invalid field-name in %s %s\r\n",
-                                        tag, cmd, fetchatt.s);
+                                        tag, cmd, buf_s(&fetchatt));
                             eatline(imapd_in, c);
                             goto freeargs;
                         }
-                        strarray_append(newfields, fieldname.s);
+                        strarray_append(newfields, buf_s(&fieldname));
                         if (fa->cache_atleast < BIT32_MAX) {
                             bit32 this_ver =
-                                mailbox_cached_header(fieldname.s);
+                                mailbox_cached_header(buf_s(&fieldname));
                             if(this_ver > fa->cache_atleast)
                                 fa->cache_atleast = this_ver;
                         }
                     } while (c == ' ');
                     if (c != ')') {
                         prot_printf(imapd_out, "%s BAD Missing required close parenthesis in %s %s\r\n",
-                                    tag, cmd, fetchatt.s);
+                                    tag, cmd, buf_s(&fetchatt));
                         eatline(imapd_in, c);
                         goto freeargs;
                     }
 
                     /* Grab/parse the ]<x.y> part */
                     c = getword(imapd_in, &fieldname);
-                    p = fieldname.s;
+                    p = buf_s(&fieldname);
                     if (*p++ != ']') {
                         prot_printf(imapd_out, "%s BAD Missing required close bracket after %s %s\r\n",
-                                    tag, cmd, fetchatt.s);
+                                    tag, cmd, buf_s(&fetchatt));
                         eatline(imapd_in, c);
                         goto freeargs;
                     }
@@ -4819,7 +4815,7 @@ badannotation:
                         goto freeargs;
                     }
                     appendfieldlist(&fa->fsections,
-                                    section, newfields, fieldname.s,
+                                    section, newfields, buf_s(&fieldname),
                                     &oi, sizeof(oi));
                     /* old 'newfields' is managed by the fieldlist now */
                     newfields = strarray_new();
@@ -4862,58 +4858,58 @@ badannotation:
             break;
 
         case 'C':
-            if (!strcmp(fetchatt.s, "CID") &&
+            if (!strcmp(buf_s(&fetchatt), "CID") &&
                 config_getswitch(IMAPOPT_CONVERSATIONS)) {
                 fa->fetchitems |= FETCH_CID;
             }
-            else if (!strcmp(fetchatt.s, "CREATEDMODSEQ")) {
+            else if (!strcmp(buf_s(&fetchatt), "CREATEDMODSEQ")) {
                 fa->fetchitems |= FETCH_CREATEDMODSEQ;
             }
             else goto badatt;
             break;
 
         case 'D':
-            if (!strcmp(fetchatt.s, "DIGEST.SHA1")) {
+            if (!strcmp(buf_s(&fetchatt), "DIGEST.SHA1")) {
                 fa->fetchitems |= FETCH_GUID;
             }
             else goto badatt;
             break;
 
         case 'E':
-            if (!strcmp(fetchatt.s, "ENVELOPE")) {
+            if (!strcmp(buf_s(&fetchatt), "ENVELOPE")) {
                 fa->fetchitems |= FETCH_ENVELOPE;
             }
-            else if (!strcmp(fetchatt.s, "EMAILID")) {   /* RFC 8474 */
+            else if (!strcmp(buf_s(&fetchatt), "EMAILID")) {   /* RFC 8474 */
                 fa->fetchitems |= FETCH_EMAILID;
             }
             else goto badatt;
             break;
 
         case 'F':
-            if (!inlist && !strcmp(fetchatt.s, "FAST")) {
+            if (!inlist && !strcmp(buf_s(&fetchatt), "FAST")) {
                 fa->fetchitems |= FETCH_FAST;
             }
-            else if (!inlist && !strcmp(fetchatt.s, "FULL")) {
+            else if (!inlist && !strcmp(buf_s(&fetchatt), "FULL")) {
                 fa->fetchitems |= FETCH_FULL;
             }
-            else if (!strcmp(fetchatt.s, "FLAGS")) {
+            else if (!strcmp(buf_s(&fetchatt), "FLAGS")) {
                 fa->fetchitems |= FETCH_FLAGS;
             }
-            else if (!strcmp(fetchatt.s, "FOLDER")) {
+            else if (!strcmp(buf_s(&fetchatt), "FOLDER")) {
                 fa->fetchitems |= FETCH_FOLDER;
             }
             else goto badatt;
             break;
 
         case 'I':
-            if (!strcmp(fetchatt.s, "INTERNALDATE")) {
+            if (!strcmp(buf_s(&fetchatt), "INTERNALDATE")) {
                 fa->fetchitems |= FETCH_INTERNALDATE;
             }
             else goto badatt;
             break;
 
         case 'L':
-            if (!strcmp(fetchatt.s, "LASTUPDATED")) {
+            if (!strcmp(buf_s(&fetchatt), "LASTUPDATED")) {
                 fa->fetchitems |= FETCH_LASTUPDATED;
             }
             else goto badatt;
@@ -4921,21 +4917,21 @@ badannotation:
 
         case 'M':
             if (config_getswitch(IMAPOPT_CONVERSATIONS)
-                && !strcmp(fetchatt.s, "MAILBOXES")) {
+                && !strcmp(buf_s(&fetchatt), "MAILBOXES")) {
                 fa->fetchitems |= FETCH_MAILBOXES;
             }
             else if (config_getswitch(IMAPOPT_CONVERSATIONS)
-                && !strcmp(fetchatt.s, "MAILBOXIDS")) {
+                && !strcmp(buf_s(&fetchatt), "MAILBOXIDS")) {
                 fa->fetchitems |= FETCH_MAILBOXIDS;
             }
-            else if (!strcmp(fetchatt.s, "MODSEQ")) {
+            else if (!strcmp(buf_s(&fetchatt), "MODSEQ")) {
                 fa->fetchitems |= FETCH_MODSEQ;
             }
             else goto badatt;
             break;
 
         case 'P':
-            if (!strcmp(fetchatt.s, "PREVIEW")) {
+            if (!strcmp(buf_s(&fetchatt), "PREVIEW")) {
                 fa->fetchitems |= FETCH_PREVIEW;
                 if (c == ' ') {
                     c = prot_getc(imapd_in);
@@ -4943,8 +4939,8 @@ badannotation:
                         c = ' ';
                         while (c == ' ') {
                             c = getword(imapd_in, &fieldname);
-                            if (strcasecmp(fieldname.s, "LAZY")) {
-                                prot_printf(imapd_out, "%s BAD FETCH contains invalid preview modifier (%s)\r\n", tag, fieldname.s);
+                            if (strcasecmp(buf_s(&fieldname), "LAZY")) {
+                                prot_printf(imapd_out, "%s BAD FETCH contains invalid preview modifier (%s)\r\n", tag, buf_s(&fieldname));
                                 eatline(imapd_in, c);
                                 goto freeargs;
                             }
@@ -4966,75 +4962,75 @@ badannotation:
             break;
 
         case 'R':
-            if (!strcmp(fetchatt.s, "RFC822")) {
+            if (!strcmp(buf_s(&fetchatt), "RFC822")) {
                 fa->fetchitems |= FETCH_RFC822|FETCH_SETSEEN;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.HEADER")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.HEADER")) {
                 fa->fetchitems |= FETCH_HEADER;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.PEEK")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.PEEK")) {
                 fa->fetchitems |= FETCH_RFC822;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.SIZE")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.SIZE")) {
                 fa->fetchitems |= FETCH_SIZE;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.TEXT")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.TEXT")) {
                 fa->fetchitems |= FETCH_TEXT|FETCH_SETSEEN;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.SHA1")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.SHA1")) {
                 fa->fetchitems |= FETCH_SHA1;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.FILESIZE")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.FILESIZE")) {
                 fa->fetchitems |= FETCH_FILESIZE;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.TEXT.PEEK")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.TEXT.PEEK")) {
                 fa->fetchitems |= FETCH_TEXT;
             }
-            else if (!strcmp(fetchatt.s, "RFC822.HEADER.LINES") ||
-                     !strcmp(fetchatt.s, "RFC822.HEADER.LINES.NOT")) {
+            else if (!strcmp(buf_s(&fetchatt), "RFC822.HEADER.LINES") ||
+                     !strcmp(buf_s(&fetchatt), "RFC822.HEADER.LINES.NOT")) {
                 if (c != ' ') {
                     prot_printf(imapd_out, "%s BAD Missing required argument to %s %s\r\n",
-                           tag, cmd, fetchatt.s);
+                           tag, cmd, buf_s(&fetchatt));
                     eatline(imapd_in, c);
                     goto freeargs;
                 }
                 c = prot_getc(imapd_in);
                 if (c != '(') {
                     prot_printf(imapd_out, "%s BAD Missing required open parenthesis in %s %s\r\n",
-                           tag, cmd, fetchatt.s);
+                           tag, cmd, buf_s(&fetchatt));
                     eatline(imapd_in, c);
                     goto freeargs;
                 }
                 do {
                     c = getastring(imapd_in, imapd_out, &fieldname);
-                    for (p = fieldname.s; *p; p++) {
+                    for (p = buf_s(&fieldname); *p; p++) {
                         if (*p <= ' ' || *p & 0x80 || *p == ':') break;
                     }
-                    if (*p || !*fieldname.s) {
+                    if (*p || !*buf_s(&fieldname)) {
                         prot_printf(imapd_out, "%s BAD Invalid field-name in %s %s\r\n",
-                               tag, cmd, fetchatt.s);
+                               tag, cmd, buf_s(&fetchatt));
                         eatline(imapd_in, c);
                         goto freeargs;
                     }
-                    lcase(fieldname.s);
+                    buf_lcase(&fieldname);
                     /* 19 is magic number -- length of
                      * "RFC822.HEADERS.NOT" */
-                    strarray_append(strlen(fetchatt.s) == 19 ?
+                    strarray_append(strlen(buf_s(&fetchatt)) == 19 ?
                                   &fa->headers : &fa->headers_not,
-                                  fieldname.s);
-                    if (strlen(fetchatt.s) != 19) {
+                                  buf_s(&fieldname));
+                    if (strlen(buf_s(&fetchatt)) != 19) {
                         fa->cache_atleast = BIT32_MAX;
                     }
                     if (fa->cache_atleast < BIT32_MAX) {
                         bit32 this_ver =
-                            mailbox_cached_header(fieldname.s);
+                            mailbox_cached_header(buf_s(&fieldname));
                         if(this_ver > fa->cache_atleast)
                             fa->cache_atleast = this_ver;
                    }
                 } while (c == ' ');
                 if (c != ')') {
                     prot_printf(imapd_out, "%s BAD Missing required close parenthesis in %s %s\r\n",
-                           tag, cmd, fetchatt.s);
+                           tag, cmd, buf_s(&fetchatt));
                     eatline(imapd_in, c);
                     goto freeargs;
                 }
@@ -5044,24 +5040,24 @@ badannotation:
             break;
 
         case 'S':
-            if (!strcmp(fetchatt.s, "SAVEDATE")) {
+            if (!strcmp(buf_s(&fetchatt), "SAVEDATE")) {
                 fa->fetchitems |= FETCH_SAVEDATE;
             }
             else goto badatt;
             break;
 
         case 'T':
-            if (!strcmp(fetchatt.s, "THREADID")) {   /* RFC 8474 */
+            if (!strcmp(buf_s(&fetchatt), "THREADID")) {   /* RFC 8474 */
                 fa->fetchitems |= FETCH_THREADID;
             }
             else goto badatt;
             break;
 
         case 'U':
-            if (!strcmp(fetchatt.s, "UID")) {
+            if (!strcmp(buf_s(&fetchatt), "UID")) {
                 fa->fetchitems |= FETCH_UID;
             }
-            else if (!strcmp(fetchatt.s, "UIDVALIDITY")) {
+            else if (!strcmp(buf_s(&fetchatt), "UIDVALIDITY")) {
                 fa->fetchitems |= FETCH_UIDVALIDITY;
             }
             else goto badatt;
@@ -5069,7 +5065,7 @@ badannotation:
 
         default:
         badatt:
-            prot_printf(imapd_out, "%s BAD Invalid %s attribute %s\r\n", tag, cmd, fetchatt.s);
+            prot_printf(imapd_out, "%s BAD Invalid %s attribute %s\r\n", tag, cmd, buf_s(&fetchatt));
             eatline(imapd_in, c);
             goto freeargs;
         }
@@ -5101,12 +5097,12 @@ badannotation:
         }
         do {
             c = getword(imapd_in, &fetchatt);
-            ucase(fetchatt.s);
-            if (!strcmp(fetchatt.s, "CHANGEDSINCE")) {
+            buf_ucase(&fetchatt);
+            if (!strcmp(buf_s(&fetchatt), "CHANGEDSINCE")) {
                 if (c != ' ') {
                     prot_printf(imapd_out,
                                 "%s BAD Missing required argument to %s %s\r\n",
-                                tag, cmd, fetchatt.s);
+                                tag, cmd, buf_s(&fetchatt));
                     eatline(imapd_in, c);
                     goto freeargs;
                 }
@@ -5114,19 +5110,19 @@ badannotation:
                 if (c == EOF) {
                     prot_printf(imapd_out,
                                 "%s BAD Invalid argument to %s %s\r\n",
-                                tag, cmd, fetchatt.s);
+                                tag, cmd, buf_s(&fetchatt));
                     eatline(imapd_in, c);
                     goto freeargs;
                 }
                 fa->fetchitems |= FETCH_MODSEQ;
             }
             else if (allow_vanished &&
-                     !strcmp(fetchatt.s, "VANISHED")) {
+                     !strcmp(buf_s(&fetchatt), "VANISHED")) {
                 fa->vanished = 1;
             }
             else {
                 prot_printf(imapd_out, "%s BAD Invalid %s modifier %s\r\n",
-                            tag, cmd, fetchatt.s);
+                            tag, cmd, buf_s(&fetchatt));
                 eatline(imapd_in, c);
                 goto freeargs;
             }
@@ -5843,12 +5839,12 @@ static void cmd_store(char *tag, char *sequence, int usinguid)
 
         do {
             c = getword(imapd_in, &storemod);
-            ucase(storemod.s);
-            if (!strcmp(storemod.s, "UNCHANGEDSINCE")) {
+            buf_ucase(&storemod);
+            if (!strcmp(buf_s(&storemod), "UNCHANGEDSINCE")) {
                 if (c != ' ') {
                     prot_printf(imapd_out,
                                 "%s BAD Missing required argument to %s %s\r\n",
-                                tag, cmd, storemod.s);
+                                tag, cmd, buf_s(&storemod));
                     eatline(imapd_in, c);
                     return;
                 }
@@ -5863,7 +5859,7 @@ static void cmd_store(char *tag, char *sequence, int usinguid)
             }
             else {
                 prot_printf(imapd_out, "%s BAD Invalid %s modifier %s\r\n",
-                            tag, cmd, storemod.s);
+                            tag, cmd, buf_s(&storemod));
                 eatline(imapd_in, c);
                 return;
             }
@@ -5894,24 +5890,24 @@ static void cmd_store(char *tag, char *sequence, int usinguid)
         eatline(imapd_in, c);
         return;
     }
-    lcase(operation.s);
+    buf_lcase(&operation);
 
-    len = strlen(operation.s);
-    if (len > 7 && !strcmp(operation.s+len-7, ".silent")) {
+    len = strlen(buf_s(&operation));
+    if (len > 7 && !strcmp(buf_s(&operation)+len-7, ".silent")) {
         storeargs.silent = 1;
-        operation.s[len-7] = '\0';
+        buf_s(&operation)[len-7] = '\0';
     }
 
-    if (!strcmp(operation.s, "+flags")) {
+    if (!strcmp(buf_s(&operation), "+flags")) {
         storeargs.operation = STORE_ADD_FLAGS;
     }
-    else if (!strcmp(operation.s, "-flags")) {
+    else if (!strcmp(buf_s(&operation), "-flags")) {
         storeargs.operation = STORE_REMOVE_FLAGS;
     }
-    else if (!strcmp(operation.s, "flags")) {
+    else if (!strcmp(buf_s(&operation), "flags")) {
         storeargs.operation = STORE_REPLACE_FLAGS;
     }
-    else if (!strcmp(operation.s, "annotation")) {
+    else if (!strcmp(buf_s(&operation), "annotation")) {
         storeargs.operation = STORE_ANNOTATION;
         /* ANNOTATION has implicit .SILENT behaviour */
         storeargs.silent = 1;
@@ -5936,28 +5932,28 @@ static void cmd_store(char *tag, char *sequence, int usinguid)
 
     for (;;) {
         c = getword(imapd_in, &flagname);
-        if (c == '(' && !flagname.s[0] && !flagsparsed && !inlist) {
+        if (c == '(' && !buf_s(&flagname)[0] && !flagsparsed && !inlist) {
             inlist = 1;
             continue;
         }
 
-        if (!flagname.s[0]) break;
+        if (!buf_s(&flagname)[0]) break;
 
-        if (flagname.s[0] == '\\') {
-            lcase(flagname.s);
-            if (!strcmp(flagname.s, "\\seen")) {
+        if (buf_s(&flagname)[0] == '\\') {
+            buf_lcase(&flagname);
+            if (!strcmp(buf_s(&flagname), "\\seen")) {
                 storeargs.seen = 1;
             }
-            else if (!strcmp(flagname.s, "\\answered")) {
+            else if (!strcmp(buf_s(&flagname), "\\answered")) {
                 storeargs.system_flags |= FLAG_ANSWERED;
             }
-            else if (!strcmp(flagname.s, "\\flagged")) {
+            else if (!strcmp(buf_s(&flagname), "\\flagged")) {
                 storeargs.system_flags |= FLAG_FLAGGED;
             }
-            else if (!strcmp(flagname.s, "\\deleted")) {
+            else if (!strcmp(buf_s(&flagname), "\\deleted")) {
                 storeargs.system_flags |= FLAG_DELETED;
             }
-            else if (!strcmp(flagname.s, "\\draft")) {
+            else if (!strcmp(buf_s(&flagname), "\\draft")) {
                 storeargs.system_flags |= FLAG_DRAFT;
             }
             else {
@@ -5967,14 +5963,14 @@ static void cmd_store(char *tag, char *sequence, int usinguid)
                 goto freeflags;
             }
         }
-        else if (!imparse_isatom(flagname.s)) {
+        else if (!imparse_isatom(buf_s(&flagname))) {
             prot_printf(imapd_out, "%s BAD Invalid flag name %s in %s command\r\n",
-                   tag, flagname.s, cmd);
+                   tag, buf_s(&flagname), cmd);
             eatline(imapd_in, c);
             goto freeflags;
         }
         else
-            strarray_append(&storeargs.flags, flagname.s);
+            strarray_append(&storeargs.flags, buf_s(&flagname));
 
         flagsparsed++;
         if (c != ' ') break;
@@ -6072,7 +6068,7 @@ static void cmd_search(char *tag, int usinguid)
         /* Quirks overrule anything */
         searchargs->fuzzy_depth++;
     }
-    else if (!annotatemore_lookupmask(inbox, annot, imapd_userid, &val) && val.len) {
+    else if (!annotatemore_lookupmask(inbox, annot, imapd_userid, &val) && buf_len(&val)) {
         /* User may override global config */
         int b = config_parse_switch(buf_cstring(&val));
         if (b > 0 || (b < 0 && config_getswitch(IMAPOPT_SEARCH_FUZZY_ALWAYS))) {
@@ -6155,7 +6151,7 @@ static void cmd_sort(char *tag, int usinguid)
     /* See if its ESORT */
     c = getword(imapd_in, &arg);
     if (c == EOF) goto error;
-    else if (c == ' ' && !strcasecmp(arg.s, "return")) {   /* RFC 5267 */
+    else if (c == ' ' && !strcasecmp(buf_s(&arg), "return")) {   /* RFC 5267 */
         c = get_search_return_opts(imapd_in, imapd_out, searchargs);
         if (c != ' ') goto error;
     }
@@ -6563,9 +6559,9 @@ static void cmd_thread(char *tag, int usinguid)
         return;
     }
 
-    if ((alg = find_thread_algorithm(arg.s)) == -1) {
+    if ((alg = find_thread_algorithm(buf_s(&arg))) == -1) {
         prot_printf(imapd_out, "%s BAD Invalid Thread algorithm %s\r\n",
-                    tag, arg.s);
+                    tag, buf_s(&arg));
         eatline(imapd_in, c);
         return;
     }
@@ -6694,7 +6690,7 @@ static void cmd_copy(char *tag, char *sequence, char *name, int usinguid, int is
 
             if (res == PROXY_OK) {
                 if (myrights & ACL_READ) {
-                    appenduid = strchr(s->last_result.s, '[');
+                    appenduid = strchr(buf_s(&s->last_result), '[');
                     /* skip over APPENDUID */
                     if (appenduid) {
                         appenduid += strlen("[appenduid ");
@@ -6710,7 +6706,7 @@ static void cmd_copy(char *tag, char *sequence, char *name, int usinguid, int is
                                 error_message(IMAP_OK_COMPLETED));
                 }
             } else {
-                prot_printf(imapd_out, "%s %s", tag, s->last_result.s);
+                prot_printf(imapd_out, "%s %s", tag, buf_s(&s->last_result));
             }
         } else {
             /* abort the append */
@@ -7022,10 +7018,10 @@ static void cmd_create(char *tag, char *name, struct dlist *extargs, int localon
                     prot_printastring(s_conn->out, name);
 
                     // special use needs extended support, so pass through extargs
-                    if (specialuse.len || uniqueid) {
+                    if (buf_len(&specialuse) || uniqueid) {
                         prot_printf(s_conn->out, " (");
                         int printsp = 0;
-                        if (specialuse.len) {
+                        if (buf_len(&specialuse)) {
                             if (printsp) prot_putc(' ', s_conn->out);
                             printsp = 1;
                             prot_printf(s_conn->out, "USE (%s)", buf_cstring(&specialuse));
@@ -7069,7 +7065,7 @@ static void cmd_create(char *tag, char *name, struct dlist *extargs, int localon
 
                     imapd_check(s_conn, 0);
 
-                    prot_printf(imapd_out, "%s %s", tag, s_conn->last_result.s);
+                    prot_printf(imapd_out, "%s %s", tag, buf_s(&s_conn->last_result));
 
                     goto done;
 
@@ -7218,7 +7214,7 @@ localcreate:
     mailboxid = xstrdup(mailbox_uniqueid(mailbox));
     mailbox_close(&mailbox);
 
-    if (specialuse.len) {
+    if (buf_len(&specialuse)) {
         r = annotatemore_write(mbname_intname(mbname), "/specialuse", mbname_userid(mbname), &specialuse);
         if (r) {
             /* XXX - failure here SHOULD cause a cleanup of the created mailbox */
@@ -7341,7 +7337,7 @@ static void cmd_delete(char *tag, char *name, int localonly, int force)
         } else {
             /* we're allowed to reference last_result since the noop, if
                sent, went to a different server */
-            prot_printf(imapd_out, "%s %s", tag, s->last_result.s);
+            prot_printf(imapd_out, "%s %s", tag, buf_s(&s->last_result));
         }
 
         mbname_free(&mbname);
@@ -7720,7 +7716,7 @@ static void cmd_rename(char *tag, char *oldname, char *newname, char *location)
         } else {
             /* we're allowed to reference last_result since the noop, if
                sent, went to a different server */
-            prot_printf(imapd_out, "%s %s", tag, s->last_result.s);
+            prot_printf(imapd_out, "%s %s", tag, buf_s(&s->last_result));
         }
 
         goto done;
@@ -8157,14 +8153,14 @@ static void getlistargs(char *tag, struct listargs *listargs)
 
     /* Read in reference name */
     c = getastring(imapd_in, imapd_out, &reference);
-    if (c == EOF && !*reference.s) {
+    if (c == EOF && !*buf_s(&reference)) {
         prot_printf(imapd_out,
                     "%s BAD Missing required argument to List: reference name\r\n",
                     tag);
         eatline(imapd_in, c);
         return;
     }
-    listargs->ref = reference.s;
+    listargs->ref = buf_s(&reference);
 
     if (c != ' ') {
         prot_printf(imapd_out,
@@ -8179,8 +8175,8 @@ static void getlistargs(char *tag, struct listargs *listargs)
         listargs->cmd = LIST_CMD_EXTENDED;
         for (;;) {
             c = getastring(imapd_in, imapd_out, &buf);
-            if (*buf.s)
-                strarray_append(&listargs->pat, buf.s);
+            if (*buf_s(&buf))
+                strarray_append(&listargs->pat, buf_s(&buf));
             if (c != ' ') break;
         }
         if (c != ')') {
@@ -8201,7 +8197,7 @@ static void getlistargs(char *tag, struct listargs *listargs)
             eatline(imapd_in, c);
             goto freeargs;
         }
-        strarray_append(&listargs->pat, buf.s);
+        strarray_append(&listargs->pat, buf_s(&buf));
     }
 
     /* Check for and parse LIST-EXTENDED return options */
@@ -8652,7 +8648,7 @@ static void cmd_setacl(char *tag, const char *name,
         } else {
             /* we're allowed to reference last_result since the noop, if
                sent, went to a different server */
-            prot_printf(imapd_out, "%s %s", tag, s->last_result.s);
+            prot_printf(imapd_out, "%s %s", tag, buf_s(&s->last_result));
         }
 
         goto done;
@@ -9005,9 +9001,9 @@ void cmd_setquota(const char *tag, const char *quotaroot)
         int32_t limit = 0;
 
         c = getword(imapd_in, &arg);
-        if ((c == ')') && !arg.s[0]) break;
+        if ((c == ')') && !buf_s(&arg)[0]) break;
         if (c != ' ') goto badlist;
-        res = quota_name_to_resource(arg.s);
+        res = quota_name_to_resource(buf_s(&arg));
         if (res < 0) {
             r = IMAP_UNSUPPORTED_QUOTA;
             goto out;
@@ -9170,48 +9166,48 @@ static int parse_statusitems(unsigned *statusitemsp, const char **errstr)
     if (c != '(') goto bad;
 
     c = getword(imapd_in, &arg);
-    if (arg.s[0] == '\0') goto bad;
+    if (!buf_len(&arg)) goto bad;
     for (;;) {
-        lcase(arg.s);
-        if (!strcmp(arg.s, "messages")) {
+        buf_lcase(&arg);
+        if (!strcmp(buf_s(&arg), "messages")) {
             statusitems |= STATUS_MESSAGES;
         }
-        else if (!strcmp(arg.s, "recent")) {
+        else if (!strcmp(buf_s(&arg), "recent")) {
             statusitems |= STATUS_RECENT;
         }
-        else if (!strcmp(arg.s, "uidnext")) {
+        else if (!strcmp(buf_s(&arg), "uidnext")) {
             statusitems |= STATUS_UIDNEXT;
         }
-        else if (!strcmp(arg.s, "uidvalidity")) {
+        else if (!strcmp(buf_s(&arg), "uidvalidity")) {
             statusitems |= STATUS_UIDVALIDITY;
         }
-        else if (!strcmp(arg.s, "mailboxid")) {
+        else if (!strcmp(buf_s(&arg), "mailboxid")) {
             statusitems |= STATUS_MAILBOXID;
         }
-        else if (!strcmp(arg.s, "unseen")) {
+        else if (!strcmp(buf_s(&arg), "unseen")) {
             statusitems |= STATUS_UNSEEN;
         }
-        else if (!strcmp(arg.s, "size")) {
+        else if (!strcmp(buf_s(&arg), "size")) {
             statusitems |= STATUS_SIZE;
         }
-        else if (!strcmp(arg.s, "highestmodseq")) {
+        else if (!strcmp(buf_s(&arg), "highestmodseq")) {
             statusitems |= STATUS_HIGHESTMODSEQ;
         }
-        else if (!strcmp(arg.s, "createdmodseq")) {
+        else if (!strcmp(buf_s(&arg), "createdmodseq")) {
             statusitems |= STATUS_CREATEDMODSEQ;
         }
-        else if (hasconv && !strcmp(arg.s, "xconvexists")) {
+        else if (hasconv && !strcmp(buf_s(&arg), "xconvexists")) {
             statusitems |= STATUS_XCONVEXISTS;
         }
-        else if (hasconv && !strcmp(arg.s, "xconvunseen")) {
+        else if (hasconv && !strcmp(buf_s(&arg), "xconvunseen")) {
             statusitems |= STATUS_XCONVUNSEEN;
         }
-        else if (hasconv && !strcmp(arg.s, "xconvmodseq")) {
+        else if (hasconv && !strcmp(buf_s(&arg), "xconvmodseq")) {
             statusitems |= STATUS_XCONVMODSEQ;
         }
         else {
             static char buf[200];
-            snprintf(buf, 200, "Invalid Status attributes %s", arg.s);
+            snprintf(buf, 200, "Invalid Status attributes %s", buf_s(&arg));
             *errstr = buf;
             goto bad;
         }
@@ -9555,7 +9551,7 @@ static int parsecreateargs(struct dlist **extargs)
         /* new style RFC 4466 arguments */
         do {
             c = getword(imapd_in, &arg);
-            name = ucase(arg.s);
+            name = buf_ucase(&arg);
             if (c != ' ') goto fail;
             c = prot_getc(imapd_in);
             if (c == '(') {
@@ -9563,7 +9559,7 @@ static int parsecreateargs(struct dlist **extargs)
                 sub = dlist_newlist(res, name);
                 do {
                     c = getword(imapd_in, &val);
-                    dlist_setatom(sub, name, val.s);
+                    dlist_setatom(sub, name, buf_s(&val));
                 } while (c == ' ');
                 if (c != ')') goto fail;
                 c = prot_getc(imapd_in);
@@ -9571,7 +9567,7 @@ static int parsecreateargs(struct dlist **extargs)
             else {
                 prot_ungetc(c, imapd_in);
                 c = getword(imapd_in, &val);
-                dlist_setatom(res, name, val.s);
+                dlist_setatom(res, name, buf_s(&val));
             }
         } while (c == ' ');
         if (c != ')') goto fail;
@@ -9581,15 +9577,15 @@ static int parsecreateargs(struct dlist **extargs)
         prot_ungetc(c, imapd_in);
         c = getword(imapd_in, &arg);
         if (c == EOF) goto fail;
-        p = strchr(arg.s, '!');
+        p = strchr(buf_s(&arg), '!');
         if (p) {
             /* with a server */
             *p = '\0';
-            dlist_setatom(res, "SERVER", arg.s);
+            dlist_setatom(res, "SERVER", buf_s(&arg));
             dlist_setatom(res, "PARTITION", p+1);
         }
         else {
-            dlist_setatom(res, "PARTITION", arg.s);
+            dlist_setatom(res, "PARTITION", buf_s(&arg));
         }
     }
 
@@ -9638,7 +9634,7 @@ static int parse_annotate_fetch_data(const char *tag,
             }
 
             /* add the entry to the list */
-            strarray_append(entries, arg.s);
+            strarray_append(entries, buf_s(&arg));
 
         } while (c == ' ');
 
@@ -9664,7 +9660,7 @@ static int parse_annotate_fetch_data(const char *tag,
             goto baddata;
         }
 
-        strarray_append(entries, arg.s);
+        strarray_append(entries, buf_s(&arg));
     }
 
     if (c != ' ' || (c = prot_getc(imapd_in)) == EOF) {
@@ -9687,7 +9683,7 @@ static int parse_annotate_fetch_data(const char *tag,
             }
 
             /* add the attrib to the list */
-            strarray_append(attribs, arg.s);
+            strarray_append(attribs, buf_s(&arg));
 
         } while (c == ' ');
 
@@ -9713,7 +9709,7 @@ static int parse_annotate_fetch_data(const char *tag,
             goto baddata;
         }
 
-        strarray_append(attribs, arg.s);
+        strarray_append(attribs, buf_s(&arg));
    }
 
     return c;
@@ -9758,7 +9754,7 @@ static int parse_metadata_string_or_list(const char *tag,
             }
 
             /* add the entry to the list */
-            strarray_append(entries, arg.s);
+            strarray_append(entries, buf_s(&arg));
 
         } while (c == ' ');
 
@@ -9783,10 +9779,10 @@ static int parse_metadata_string_or_list(const char *tag,
             goto baddata;
         }
 
-        strarray_append(entries, arg.s);
+        strarray_append(entries, buf_s(&arg));
 
         // It is only not a list if there are no wildcards
-        if (!strchr(arg.s, '*') && !strchr(arg.s, '%')) {
+        if (!strchr(buf_s(&arg), '*') && !strchr(buf_s(&arg), '%')) {
             // Not a list
             if (is_list) *is_list = 0;
         }
@@ -9888,7 +9884,7 @@ static int parse_annotate_store_data(const char *tag,
             }
 
             /* add the attrib-value pair to the list */
-            appendattvalue(&attvalues, attrib.s, &value);
+            appendattvalue(&attvalues, buf_s(&attrib), &value);
 
         } while (c == ' ');
 
@@ -9900,7 +9896,7 @@ static int parse_annotate_store_data(const char *tag,
         }
 
         /* add the entry to the list */
-        appendentryatt(entryatts, entry.s, attvalues);
+        appendentryatt(entryatts, buf_s(&entry), attvalues);
         attvalues = NULL;
 
         c = prot_getc(imapd_in);
@@ -9964,7 +9960,7 @@ static int parse_metadata_store_data(const char *tag,
         /* DAV code uses case significant metadata entries, so if you log in with +dav,
          * we make the metadata commands case significant! */
         if (strcasecmpsafe(imapd_magicplus, "+dav"))
-            lcase(entry.s);
+            buf_lcase(&entry);
 
         /* get value */
         c = getbnstring(imapd_in, imapd_out, &value);
@@ -9974,15 +9970,15 @@ static int parse_metadata_store_data(const char *tag,
             goto baddata;
         }
 
-        if (!strncmp(entry.s, "/private", 8) &&
-            (entry.s[8] == '\0' || entry.s[8] == '/')) {
+        if (!strncmp(buf_s(&entry), "/private", 8) &&
+            (buf_s(&entry)[8] == '\0' || buf_s(&entry)[8] == '/')) {
             att = "value.priv";
-            name = entry.s + 8;
+            name = buf_s(&entry) + 8;
         }
-        else if (!strncmp(entry.s, "/shared", 7) &&
-                 (entry.s[7] == '\0' || entry.s[7] == '/')) {
+        else if (!strncmp(buf_s(&entry), "/shared", 7) &&
+                 (buf_s(&entry)[7] == '\0' || buf_s(&entry)[7] == '/')) {
             att = "value.shared";
-            name = entry.s + 7;
+            name = buf_s(&entry) + 7;
         }
         else {
             prot_printf(imapd_out,
@@ -10046,7 +10042,7 @@ static void getannotation_response(const char *mboxname,
         sep = ' ';
         prot_printstring(imapd_out, l->attrib);
         prot_putc(' ',  imapd_out);
-        prot_printmap(imapd_out, l->value.s, l->value.len);
+        prot_printmap(imapd_out, buf_s(&l->value), buf_len(&l->value));
     }
     prot_printf(imapd_out, ")\r\n");
     free(extname);
@@ -10276,10 +10272,10 @@ static void getmetadata_response(const char *mboxname,
             for (i = 0; i + 1 < opts->items.count; i+=2) {
                 prot_putc(i ? ' ' : '(', imapd_out);
                 const struct buf *key = bufarray_nth(&opts->items, i);
-                prot_printmap(imapd_out, key->s, key->len);
+                prot_printmap(imapd_out, buf_s(key), buf_len(key));
                 prot_putc(' ', imapd_out);
                 const struct buf *val = bufarray_nth(&opts->items, i+1);
-                prot_printmap(imapd_out, val->s, val->len);
+                prot_printmap(imapd_out, buf_s(val), buf_len(val));
             }
             prot_printf(imapd_out, ")\r\n");
             free(extname);
@@ -10294,8 +10290,8 @@ static void getmetadata_response(const char *mboxname,
 
     for (l = attvalues ; l ; l = l->next) {
         /* size check */
-        if (opts->maxsize && l->value.len >= opts->maxsize) {
-            if (l->value.len > opts->biggest) opts->biggest = l->value.len;
+        if (opts->maxsize && buf_len(&l->value) >= opts->maxsize) {
+            if (buf_len(&l->value) > opts->biggest) opts->biggest = buf_len(&l->value);
             continue;
         }
         /* check if it's a value we print... */
@@ -10776,7 +10772,7 @@ syntax_error:
         goto out_noprint;
     }
 
-    intname = mboxname_from_external(arg.s, &imapd_namespace, imapd_userid);
+    intname = mboxname_from_external(buf_s(&arg), &imapd_namespace, imapd_userid);
     r = mboxlist_lookup(intname, &mbentry, NULL);
     if (r) goto out;
 
@@ -10806,7 +10802,7 @@ syntax_error:
             goto out;
         }
 
-        prot_printf(be->out, "%s %s %s ", tag, cmd, arg.s);
+        prot_printf(be->out, "%s %s %s ", tag, cmd, buf_s(&arg));
         if (!pipe_command(backend_current, 65536)) {
             pipe_including_tag(backend_current, tag, 0);
         }
@@ -10821,24 +10817,24 @@ syntax_error:
 
     for (;;) {
         c = getword(imapd_in, &arg);
-        if (arg.len) {
-            if (!strcasecmp(arg.s, "index"))
+        if (buf_len(&arg)) {
+            if (!strcasecmp(buf_s(&arg), "index"))
                 warmup_flags |= WARMUP_INDEX;
-            else if (!strcasecmp(arg.s, "conversations"))
+            else if (!strcasecmp(buf_s(&arg), "conversations"))
                 warmup_flags |= WARMUP_CONVERSATIONS;
-            else if (!strcasecmp(arg.s, "annotations"))
+            else if (!strcasecmp(buf_s(&arg), "annotations"))
                 warmup_flags |= WARMUP_ANNOTATIONS;
-            else if (!strcasecmp(arg.s, "search"))
+            else if (!strcasecmp(buf_s(&arg), "search"))
                 warmup_flags |= WARMUP_SEARCH;
-            else if (!strcasecmp(arg.s, "uids")) {
+            else if (!strcasecmp(buf_s(&arg), "uids")) {
                 if (c != ' ') goto syntax_error;
                 c = getword(imapd_in, &arg);
                 if (c == EOF) goto syntax_error;
-                if (!imparse_issequence(arg.s)) goto syntax_error;
-                uids = seqset_parse(arg.s, NULL, /*maxval*/0);
+                if (!imparse_issequence(buf_s(&arg))) goto syntax_error;
+                uids = seqset_parse(buf_s(&arg), NULL, /*maxval*/0);
                 if (!uids) goto syntax_error;
             }
-            else if (!strcasecmp(arg.s, "all"))
+            else if (!strcasecmp(buf_s(&arg), "all"))
                 warmup_flags |= WARMUP_ALL;
             else
                 goto syntax_error;
@@ -11063,7 +11059,7 @@ static int trashacl(struct protstream *pin, struct protstream *pout,
             break;
         }
 
-        if (!strncmp(cmd.s, "ACL", 3)) {
+        if (!strncmp(buf_s(&cmd), "ACL", 3)) {
             while(c != '\n') {
                 /* An ACL response, we should send a DELETEACL command */
                 c = getastring(pin, pout, &tmp);
@@ -11092,7 +11088,7 @@ static int trashacl(struct protstream *pin, struct protstream *pout,
                 prot_printf(pout, "%s DELETEACL {" SIZE_T_FMT "+}\r\n%s"
                             " {" SIZE_T_FMT "+}\r\n%s\r\n",
                             tagbuf, strlen(mailbox), mailbox,
-                            strlen(user.s), user.s);
+                            strlen(buf_s(&user)), buf_s(&user));
                 if(c == '\r') {
                     c = prot_getc(pin);
                     if(c != '\n') {
@@ -12277,7 +12273,7 @@ static int getsortcriteria(char *tag, struct sortcrit **sortcrit)
     if (c != '(') goto missingcrit;
 
     c = getword(imapd_in, &criteria);
-    if (criteria.s[0] == '\0') goto missingcrit;
+    if (buf_s(&criteria)[0] == '\0') goto missingcrit;
 
     nsort = 0;
     n = 0;
@@ -12292,80 +12288,80 @@ static int getsortcriteria(char *tag, struct sortcrit **sortcrit)
             memset((*sortcrit)+n, 0, SORTGROWSIZE * sizeof(struct sortcrit));
         }
 
-        lcase(criteria.s);
-        if (!strcmp(criteria.s, "reverse")) {
+        buf_lcase(&criteria);
+        if (!strcmp(buf_s(&criteria), "reverse")) {
             (*sortcrit)[n].flags |= SORT_REVERSE;
             goto nextcrit;
         }
-        else if (!strcmp(criteria.s, "arrival"))
+        else if (!strcmp(buf_s(&criteria), "arrival"))
             (*sortcrit)[n].key = SORT_ARRIVAL;
-        else if (!strcmp(criteria.s, "cc"))
+        else if (!strcmp(buf_s(&criteria), "cc"))
             (*sortcrit)[n].key = SORT_CC;
-        else if (!strcmp(criteria.s, "date"))
+        else if (!strcmp(buf_s(&criteria), "date"))
             (*sortcrit)[n].key = SORT_DATE;
-        else if (!strcmp(criteria.s, "displayfrom"))
+        else if (!strcmp(buf_s(&criteria), "displayfrom"))
             (*sortcrit)[n].key = SORT_DISPLAYFROM;
-        else if (!strcmp(criteria.s, "displayto"))
+        else if (!strcmp(buf_s(&criteria), "displayto"))
             (*sortcrit)[n].key = SORT_DISPLAYTO;
-        else if (!strcmp(criteria.s, "from"))
+        else if (!strcmp(buf_s(&criteria), "from"))
             (*sortcrit)[n].key = SORT_FROM;
-        else if (!strcmp(criteria.s, "size"))
+        else if (!strcmp(buf_s(&criteria), "size"))
             (*sortcrit)[n].key = SORT_SIZE;
-        else if (!strcmp(criteria.s, "subject"))
+        else if (!strcmp(buf_s(&criteria), "subject"))
             (*sortcrit)[n].key = SORT_SUBJECT;
-        else if (!strcmp(criteria.s, "to"))
+        else if (!strcmp(buf_s(&criteria), "to"))
             (*sortcrit)[n].key = SORT_TO;
-        else if (!strcmp(criteria.s, "annotation")) {
+        else if (!strcmp(buf_s(&criteria), "annotation")) {
             const char *userid = NULL;
 
             (*sortcrit)[n].key = SORT_ANNOTATION;
             if (c != ' ') goto missingarg;
             c = getastring(imapd_in, imapd_out, &criteria);
             if (c != ' ') goto missingarg;
-            (*sortcrit)[n].args.annot.entry = xstrdup(criteria.s);
+            (*sortcrit)[n].args.annot.entry = xstrdup(buf_s(&criteria));
             c = getastring(imapd_in, imapd_out, &criteria);
             if (c == EOF) goto missingarg;
-            if (!strcmp(criteria.s, "value.shared"))
+            if (!strcmp(buf_s(&criteria), "value.shared"))
                 userid = "";
-            else if (!strcmp(criteria.s, "value.priv"))
+            else if (!strcmp(buf_s(&criteria), "value.priv"))
                 userid = imapd_userid;
             else
                 goto missingarg;
             (*sortcrit)[n].args.annot.userid = xstrdup(userid);
         }
-        else if (!strcmp(criteria.s, "modseq"))
+        else if (!strcmp(buf_s(&criteria), "modseq"))
             (*sortcrit)[n].key = SORT_MODSEQ;
-        else if (!strcmp(criteria.s, "uid"))
+        else if (!strcmp(buf_s(&criteria), "uid"))
             (*sortcrit)[n].key = SORT_UID;
-        else if (!strcmp(criteria.s, "hasflag")) {
+        else if (!strcmp(buf_s(&criteria), "hasflag")) {
             (*sortcrit)[n].key = SORT_HASFLAG;
             if (c != ' ') goto missingarg;
             c = getastring(imapd_in, imapd_out, &criteria);
             if (c == EOF) goto missingarg;
-            (*sortcrit)[n].args.flag.name = xstrdup(criteria.s);
+            (*sortcrit)[n].args.flag.name = xstrdup(buf_s(&criteria));
         }
-        else if (hasconv && !strcmp(criteria.s, "convmodseq"))
+        else if (hasconv && !strcmp(buf_s(&criteria), "convmodseq"))
             (*sortcrit)[n].key = SORT_CONVMODSEQ;
-        else if (hasconv && !strcmp(criteria.s, "convexists"))
+        else if (hasconv && !strcmp(buf_s(&criteria), "convexists"))
             (*sortcrit)[n].key = SORT_CONVEXISTS;
-        else if (hasconv && !strcmp(criteria.s, "convsize"))
+        else if (hasconv && !strcmp(buf_s(&criteria), "convsize"))
             (*sortcrit)[n].key = SORT_CONVSIZE;
-        else if (hasconv && !strcmp(criteria.s, "hasconvflag")) {
+        else if (hasconv && !strcmp(buf_s(&criteria), "hasconvflag")) {
             (*sortcrit)[n].key = SORT_HASCONVFLAG;
             if (c != ' ') goto missingarg;
             c = getastring(imapd_in, imapd_out, &criteria);
             if (c == EOF) goto missingarg;
-            (*sortcrit)[n].args.flag.name = xstrdup(criteria.s);
+            (*sortcrit)[n].args.flag.name = xstrdup(buf_s(&criteria));
         }
-        else if (!strcmp(criteria.s, "folder"))
+        else if (!strcmp(buf_s(&criteria), "folder"))
             (*sortcrit)[n].key = SORT_FOLDER;
-        else if (!strcmp(criteria.s, "relevancy"))
+        else if (!strcmp(buf_s(&criteria), "relevancy"))
             (*sortcrit)[n].key = SORT_RELEVANCY;
-        else if (!strcmp(criteria.s, "spamscore"))
+        else if (!strcmp(buf_s(&criteria), "spamscore"))
             (*sortcrit)[n].key = SORT_SPAMSCORE;
         else {
             prot_printf(imapd_out, "%s BAD Invalid Sort criterion %s\r\n",
-                        tag, criteria.s);
+                        tag, buf_s(&criteria));
             if (c != EOF) prot_ungetc(c, imapd_in);
             return EOF;
         }
@@ -12404,7 +12400,7 @@ static int getsortcriteria(char *tag, struct sortcrit **sortcrit)
     return EOF;
  missingarg:
     prot_printf(imapd_out, "%s BAD Missing argument to Sort criterion %s\r\n",
-                tag, criteria.s);
+                tag, buf_s(&criteria));
     if (c != EOF) prot_ungetc(c, imapd_in);
     return EOF;
 }
@@ -12439,12 +12435,12 @@ static int parse_windowargs(const char *tag,
 
         prot_ungetc(c, imapd_in);
         c = getword(imapd_in, &arg);
-        if (!arg.len)
+        if (!buf_len(&arg))
             goto syntax_error;
 
-        if (!strcasecmp(arg.s, "CONVERSATIONS"))
+        if (!strcasecmp(buf_s(&arg), "CONVERSATIONS"))
             windowargs.conversations = 1;
-        else if (!strcasecmp(arg.s, "POSITION")) {
+        else if (!strcasecmp(buf_s(&arg), "POSITION")) {
             if (updates)
                 goto syntax_error;
             if (c != ' ')
@@ -12462,7 +12458,7 @@ static int parse_windowargs(const char *tag,
             if (windowargs.position == 0)
                 goto syntax_error;
         }
-        else if (!strcasecmp(arg.s, "ANCHOR")) {
+        else if (!strcasecmp(buf_s(&arg), "ANCHOR")) {
             if (updates)
                 goto syntax_error;
             if (c != ' ')
@@ -12483,7 +12479,7 @@ static int parse_windowargs(const char *tag,
             if (windowargs.anchor == 0)
                 goto syntax_error;
         }
-        else if (!strcasecmp(arg.s, "MULTIANCHOR")) {
+        else if (!strcasecmp(buf_s(&arg), "MULTIANCHOR")) {
             if (updates)
                 goto syntax_error;
             if (c != ' ')
@@ -12507,7 +12503,7 @@ static int parse_windowargs(const char *tag,
             if (windowargs.anchor == 0)
                 goto syntax_error;
         }
-        else if (!strcasecmp(arg.s, "CHANGEDSINCE")) {
+        else if (!strcasecmp(buf_s(&arg), "CHANGEDSINCE")) {
             if (!updates)
                 goto syntax_error;
             windowargs.changedsince = 1;
@@ -12523,7 +12519,7 @@ static int parse_windowargs(const char *tag,
             if (c != ')')
                 goto syntax_error;
             c = prot_getc(imapd_in);
-        } else if (!strcasecmp(arg.s, "UPTO")) {
+        } else if (!strcasecmp(buf_s(&arg), "UPTO")) {
             if (!updates)
                 goto syntax_error;
             if (c != ' ')
@@ -12561,7 +12557,7 @@ out:
     if (!!updates != windowargs.changedsince)
         goto syntax_error;
 
-    if (ext_folder.len) {
+    if (buf_len(&ext_folder)) {
         windowargs.anchorfolder = mboxname_from_external(buf_cstring(&ext_folder),
                                                          &imapd_namespace,
                                                          imapd_userid);
@@ -12606,32 +12602,32 @@ static int getlistselopts(char *tag, struct listargs *args)
     for (;;) {
         c = getword(imapd_in, &buf);
 
-        if (!*buf.s) {
+        if (!*buf_s(&buf)) {
             prot_printf(imapd_out,
                         "%s BAD Invalid syntax in List command\r\n",
                         tag);
             goto bad;
         }
 
-        lcase(buf.s);
+        buf_lcase(&buf);
 
-        if (!strcmp(buf.s, "subscribed")) {
+        if (!strcmp(buf_s(&buf), "subscribed")) {
             args->sel |= LIST_SEL_SUBSCRIBED;
             args->ret |= LIST_RET_SUBSCRIBED;
-        } else if (!strcmp(buf.s, "vendor.cmu-dav")) {
+        } else if (!strcmp(buf_s(&buf), "vendor.cmu-dav")) {
             args->sel |= LIST_SEL_DAV;
-        } else if (!strcmp(buf.s, "vendor.cmu-include-deleted") && allowdeleted) {
+        } else if (!strcmp(buf_s(&buf), "vendor.cmu-include-deleted") && allowdeleted) {
             args->sel |= LIST_SEL_DELETED;
-        } else if (!strcmp(buf.s, "vendor.fm-include-nonexistent")) {
+        } else if (!strcmp(buf_s(&buf), "vendor.fm-include-nonexistent")) {
             args->sel |= LIST_SEL_INTERMEDIATES;
-        } else if (!strcmp(buf.s, "remote")) {
+        } else if (!strcmp(buf_s(&buf), "remote")) {
             args->sel |= LIST_SEL_REMOTE;
-        } else if (!strcmp(buf.s, "recursivematch")) {
+        } else if (!strcmp(buf_s(&buf), "recursivematch")) {
             args->sel |= LIST_SEL_RECURSIVEMATCH;
-        } else if (!strcmp(buf.s, "special-use")) {
+        } else if (!strcmp(buf_s(&buf), "special-use")) {
             args->sel |= LIST_SEL_SPECIALUSE;
             args->ret |= LIST_RET_SPECIALUSE;
-        } else if (!strcmp(buf.s, "metadata")) {
+        } else if (!strcmp(buf_s(&buf), "metadata")) {
             struct getmetadata_options opts = OPTS_INITIALIZER;
             args->sel |= LIST_SEL_METADATA;
             args->ret |= LIST_RET_METADATA;
@@ -12645,7 +12641,7 @@ static int getlistselopts(char *tag, struct listargs *args)
         } else {
             prot_printf(imapd_out,
                         "%s BAD Invalid List selection option \"%s\"\r\n",
-                        tag, buf.s);
+                        tag, buf_s(&buf));
             goto bad;
         }
 
@@ -12683,16 +12679,16 @@ static int getlistretopts(char *tag, struct listargs *args)
     int c;
 
     c = getword(imapd_in, &buf);
-    if (!*buf.s) {
+    if (!*buf_s(&buf)) {
         prot_printf(imapd_out,
                     "%s BAD Invalid syntax in List command\r\n", tag);
         goto bad;
     }
-    lcase(buf.s);
-    if (strcasecmp(buf.s, "return")) {
+    buf_lcase(&buf);
+    if (strcasecmp(buf_s(&buf), "return")) {
         prot_printf(imapd_out,
                     "%s BAD Unexpected extra argument to List: \"%s\"\r\n",
-                    tag, buf.s);
+                    tag, buf_s(&buf));
         goto bad;
     }
 
@@ -12710,23 +12706,23 @@ static int getlistretopts(char *tag, struct listargs *args)
     for (;;) {
         c = getword(imapd_in, &buf);
 
-        if (!*buf.s) {
+        if (!*buf_s(&buf)) {
             prot_printf(imapd_out,
                         "%s BAD Invalid syntax in List command\r\n", tag);
             goto bad;
         }
 
-        lcase(buf.s);
+        buf_lcase(&buf);
 
-        if (!strcmp(buf.s, "subscribed"))
+        if (!strcmp(buf_s(&buf), "subscribed"))
             args->ret |= LIST_RET_SUBSCRIBED;
-        else if (!strcmp(buf.s, "children"))
+        else if (!strcmp(buf_s(&buf), "children"))
             args->ret |= LIST_RET_CHILDREN;
-        else if (!strcmp(buf.s, "myrights"))
+        else if (!strcmp(buf_s(&buf), "myrights"))
             args->ret |= LIST_RET_MYRIGHTS;
-        else if (!strcmp(buf.s, "special-use"))
+        else if (!strcmp(buf_s(&buf), "special-use"))
             args->ret |= LIST_RET_SPECIALUSE;
-        else if (!strcmp(buf.s, "status")) {
+        else if (!strcmp(buf_s(&buf), "status")) {
             const char *errstr = "Bad status string";
             args->ret |= LIST_RET_STATUS;
             c = parse_statusitems(&args->statusitems, &errstr);
@@ -12735,7 +12731,7 @@ static int getlistretopts(char *tag, struct listargs *args)
                 return EOF;
             }
         }
-        else if (!strcmp(buf.s, "metadata")) {
+        else if (!strcmp(buf_s(&buf), "metadata")) {
             args->ret |= LIST_RET_METADATA;
             /* outputs the error for us */
             c = parse_metadata_string_or_list(tag, &args->metaitems, NULL);
@@ -12744,7 +12740,7 @@ static int getlistretopts(char *tag, struct listargs *args)
         else {
             prot_printf(imapd_out,
                         "%s BAD Invalid List return option \"%s\"\r\n",
-                        tag, buf.s);
+                        tag, buf_s(&buf));
             goto bad;
         }
 
@@ -13919,20 +13915,20 @@ static void cmd_urlfetch(char *tag)
 
         c = getastring(imapd_in, imapd_out, &arg);
         (void)prot_putc(' ', imapd_out);
-        prot_printstring(imapd_out, arg.s);
+        prot_printstring(imapd_out, buf_s(&arg));
 
         if (extended) {
             while (c == ' ') {
                 c = getword(imapd_in, &param);
 
-                ucase(param.s);
-                if (!strcmp(param.s, "BODY")) {
+                buf_ucase(&param);
+                if (!strcmp(buf_s(&param), "BODY")) {
                     if (params & (URLFETCH_BODY | URLFETCH_BINARY)) goto badext;
                     params |= URLFETCH_BODY;
-                } else if (!strcmp(param.s, "BINARY")) {
+                } else if (!strcmp(buf_s(&param), "BINARY")) {
                     if (params & (URLFETCH_BODY | URLFETCH_BINARY)) goto badext;
                     params |= URLFETCH_BINARY;
-                } else if (!strcmp(param.s, "BODYPARTSTRUCTURE")) {
+                } else if (!strcmp(buf_s(&param), "BODYPARTSTRUCTURE")) {
                     if (params & URLFETCH_BODYPARTSTRUCTURE) goto badext;
                     params |= URLFETCH_BODYPARTSTRUCTURE;
                 } else {
@@ -13945,7 +13941,7 @@ static void cmd_urlfetch(char *tag)
         }
 
         doclose = 0;
-        r = imapurl_fromURL(&url, arg.s);
+        r = imapurl_fromURL(&url, buf_s(&arg));
 
         /* validate the URL */
         if (r || !url.user || !url.server || !url.mailbox || !url.uid ||
@@ -14041,7 +14037,7 @@ static void cmd_urlfetch(char *tag)
                 r = mboxkey_read(mboxkey_db, intname, &key, &keylen);
                 if (r) break;
 
-                HMAC(EVP_sha1(), key, keylen, (unsigned char *) arg.s,
+                HMAC(EVP_sha1(), key, keylen, (unsigned char *) buf_s(&arg),
                      url.urlauth.rump_len, vtoken, &vtoken_len);
                 mboxkey_close(mboxkey_db);
 
@@ -14158,15 +14154,15 @@ static void cmd_genurlauth(char *tag)
             return;
         }
         c = getword(imapd_in, &arg2);
-        if (strcasecmp(arg2.s, "INTERNAL")) {
+        if (strcasecmp(buf_s(&arg2), "INTERNAL")) {
             prot_printf(imapd_out,
                         "%s BAD Unknown auth mechanism to Genurlauth %s\r\n",
-                        tag, arg2.s);
+                        tag, buf_s(&arg2));
             eatline(imapd_in, c);
             return;
         }
 
-        r = imapurl_fromURL(&url, arg1.s);
+        r = imapurl_fromURL(&url, buf_s(&arg1));
 
         /* validate the URL */
         if (r || !url.user || !url.server || !url.mailbox || !url.uid ||
@@ -14191,7 +14187,7 @@ static void cmd_genurlauth(char *tag)
         if (r) {
             prot_printf(imapd_out,
                         "%s BAD Poorly specified URL to Genurlauth %s\r\n",
-                        tag, arg1.s);
+                        tag, buf_s(&arg1));
             eatline(imapd_in, c);
             free(url.freeme);
             free(intname);
@@ -14231,7 +14227,7 @@ static void cmd_genurlauth(char *tag)
             eatline(imapd_in, c);
             prot_printf(imapd_out,
                         "%s NO Error authorizing %s: %s\r\n",
-                        tag, arg1.s, cyrusdb_strerror(r));
+                        tag, buf_s(&arg1), cyrusdb_strerror(r));
             free(url.freeme);
             free(intname);
             return;
@@ -14239,13 +14235,13 @@ static void cmd_genurlauth(char *tag)
 
         /* first byte is the algorithm used to create token */
         token[0] = URLAUTH_ALG_HMAC_SHA1;
-        HMAC(EVP_sha1(), key, keylen, (unsigned char *) arg1.s, strlen(arg1.s),
+        HMAC(EVP_sha1(), key, keylen, (unsigned char *) buf_s(&arg1), strlen(buf_s(&arg1)),
              token+1, &token_len);
         token_len++;
 
-        urlauth = xrealloc(urlauth, strlen(arg1.s) + 10 +
+        urlauth = xrealloc(urlauth, strlen(buf_s(&arg1)) + 10 +
                            2 * (EVP_MAX_MD_SIZE+1) + 1);
-        strcpy(urlauth, arg1.s);
+        strcpy(urlauth, buf_s(&arg1));
         strcat(urlauth, ":internal:");
         bin_to_hex(token, token_len, urlauth+strlen(urlauth), BH_LOWER);
 
@@ -14383,16 +14379,16 @@ static void cmd_enable(char *tag)
 
     do {
         c = getword(imapd_in, &arg);
-        if (!arg.s[0]) {
+        if (!buf_s(&arg)[0]) {
             prot_printf(imapd_out,
                         "\r\n%s BAD Missing required argument to Enable\r\n",
                         tag);
             eatline(imapd_in, c);
             return;
         }
-        if (!strcasecmp(arg.s, "condstore"))
+        if (!strcasecmp(buf_s(&arg), "condstore"))
             new_capa |= CAPA_CONDSTORE;
-        else if (!strcasecmp(arg.s, "qresync"))
+        else if (!strcasecmp(buf_s(&arg), "qresync"))
             new_capa |= CAPA_QRESYNC | CAPA_CONDSTORE;
     } while (c == ' ');
 

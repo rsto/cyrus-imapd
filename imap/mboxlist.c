@@ -617,7 +617,7 @@ static int mboxlist_parse_entry(mbentry_t **mbentryptr,
         memset(&rock, 0, sizeof(struct parseentry_rock));
         rock.mbentry = mbentry;
         rock.aclbuf = &aclbuf;
-        aclbuf.len = 0;
+        buf_reset(&aclbuf);
         r = dlist_parsesax(data, datalen, 0, parseentry_cb, &rock);
         if (!r) mbentry->acl = buf_newcstring(&aclbuf);
         goto done;
@@ -753,7 +753,7 @@ static int _find_specialuse(const mbentry_t *mbentry, void *rock)
 
     annotatemore_lookup_mbe(mbentry, "/specialuse", d->userid, &attrib);
 
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         strarray_t *uses = strarray_split(buf_cstring(&attrib), NULL, 0);
         if (strarray_find_case(uses, d->use, 0) >= 0)
             d->mboxname = xstrdup(mbentry->name);
@@ -991,7 +991,7 @@ static int mboxlist_update_racl(const char *dbname, const mbentry_t *oldmbentry,
             if (strarray_find(admins, acluser, 0) >= 0) continue;
             if (user_can_read(newusers, acluser)) continue;
             mboxlist_racl_key(!!userid, acluser, dbname, &buf);
-            r = cyrusdb_delete(mbdb, buf.s, buf.len, txn, /*force*/1);
+            r = cyrusdb_delete(mbdb, buf_s(&buf), buf_len(&buf), txn, /*force*/1);
             if (r) goto done;
             mboxlist_update_raclmodseq(acluser);
         }
@@ -1005,7 +1005,7 @@ static int mboxlist_update_racl(const char *dbname, const mbentry_t *oldmbentry,
             if (strarray_find(admins, acluser, 0) >= 0) continue;
             if (user_can_read(oldusers, acluser)) continue;
             mboxlist_racl_key(!!userid, acluser, dbname, &buf);
-            r = cyrusdb_store(mbdb, buf.s, buf.len, "", 0, txn);
+            r = cyrusdb_store(mbdb, buf_s(&buf), buf_len(&buf), "", 0, txn);
             if (r) goto done;
             mboxlist_update_raclmodseq(acluser);
         }
@@ -2000,7 +2000,7 @@ mboxlist_delayed_deletemailbox(const char *name, int isadmin,
         if (protect) {
             struct buf attrib = BUF_INITIALIZER;
             annotatemore_lookup(mbname_intname(mbname), "/specialuse", mbname_userid(mbname), &attrib);
-            if (attrib.len) {
+            if (buf_len(&attrib)) {
                 strarray_t *check = strarray_split(protect, NULL, STRARRAY_TRIM);
                 strarray_t *uses = strarray_split(buf_cstring(&attrib), NULL, 0);
                 if (strarray_intersect_case(uses, check))
@@ -2126,7 +2126,7 @@ EXPORTED int mboxlist_deletemailbox(const char *name, int isadmin,
         if (protect) {
             struct buf attrib = BUF_INITIALIZER;
             annotatemore_lookup(mbname_intname(mbname), "/specialuse", mbname_userid(mbname), &attrib);
-            if (attrib.len) {
+            if (buf_len(&attrib)) {
                 strarray_t *check = strarray_split(protect, NULL, STRARRAY_TRIM);
                 strarray_t *uses = strarray_split(buf_cstring(&attrib), NULL, 0);
                 if (strarray_intersect_case(uses, check))
@@ -2309,7 +2309,7 @@ static int _rename_check_specialuse(const char *oldname, const char *newname)
         annotatemore_lookup(oldname, "/specialuse", mbname_userid(old), &attrib);
 
     /* we have specialuse? */
-    if (attrib.len) {
+    if (buf_len(&attrib)) {
         strarray_t *check = strarray_split(protect, NULL, STRARRAY_TRIM);
         strarray_t *uses = strarray_split(buf_cstring(&attrib), NULL, 0);
         if (strarray_intersect_case(uses, check)) {

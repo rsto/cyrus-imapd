@@ -234,7 +234,7 @@ int parser(struct protstream *sieved_out, struct protstream *sieved_in,
 
     if (authenticated)
         prot_printf(sieved_out, "NO \"Already authenticated\"\r\n");
-    else if (cmd_authenticate(sieved_out, sieved_in, mechanism_name.s,
+    else if (cmd_authenticate(sieved_out, sieved_in, buf_s(&mechanism_name),
                               &initial_challenge, &error_msg)==FALSE)
     {
         error_msg = "Authentication Error";
@@ -553,9 +553,9 @@ int parser(struct protstream *sieved_out, struct protstream *sieved_in,
       goto error;
     }
 
-    if (sieve_name.len) {
+    if (buf_len(&sieve_name)) {
       prot_printf(sieved_out, "OK (TAG ");
-      prot_printliteral(sieved_out, sieve_name.s, sieve_name.len);
+      prot_printliteral(sieved_out, buf_s(&sieve_name), buf_len(&sieve_name));
       prot_printf(sieved_out, ") \"Done\"\r\n");
     } else
       prot_printf(sieved_out, "OK \"Done\"\r\n");
@@ -662,15 +662,15 @@ static int cmd_authenticate(struct protstream *sieved_out,
   mbentry_t *mbentry = NULL;
 
   assert(initial_challenge);
-  if (initial_challenge->s)
+  if (buf_s(initial_challenge))
   {
       /* a value was provided on the wire, possibly of zero length */
-      clientin = xmalloc(initial_challenge->len*2);
+      clientin = xmalloc(buf_len(initial_challenge)*2);
 
-      if (initial_challenge->len) {
-          sasl_result=sasl_decode64(initial_challenge->s,
-                                    initial_challenge->len,
-                                    clientin, initial_challenge->len*2,
+      if (buf_len(initial_challenge)) {
+          sasl_result=sasl_decode64(buf_s(initial_challenge),
+                                    buf_len(initial_challenge),
+                                    clientin, buf_len(initial_challenge)*2,
                                     &clientinlen);
       } else {
           clientinlen = 0;
@@ -714,11 +714,11 @@ static int cmd_authenticate(struct protstream *sieved_out,
     if (token1==STRING)
     {
       free(clientin);
-      clientin = xmalloc(str.len*2);
+      clientin = xmalloc(buf_len(&str)*2);
 
-      if (str.len) {
-          sasl_result=sasl_decode64(str.s, str.len,
-                                    clientin, str.len*2, &clientinlen);
+      if (buf_len(&str)) {
+          sasl_result=sasl_decode64(buf_s(&str), buf_len(&str),
+                                    clientin, buf_len(&str)*2, &clientinlen);
       } else {
           clientinlen = 0;
           sasl_result = SASL_OK;

@@ -98,13 +98,13 @@ static void dump_octets(FILE *fp, const char *base, unsigned int len)
 static void dump_buf(FILE *fp, const struct buf *data)
 {
 #define MAX_TEXT    512
-    if (verbose || data->len <= MAX_TEXT) {
-        dump_octets(fp, data->s, data->len);
+    if (verbose || buf_len(data) <= MAX_TEXT) {
+        dump_octets(fp, buf_s(data), buf_len(data));
     }
     else {
-        dump_octets(fp, data->s, MAX_TEXT/2);
+        dump_octets(fp, buf_s(data), MAX_TEXT/2);
         fputs("    ...\n", fp);
-        dump_octets(fp, data->s + data->len - MAX_TEXT/2, MAX_TEXT/2);
+        dump_octets(fp, buf_s(data) + buf_len(data) - MAX_TEXT/2, MAX_TEXT/2);
     }
 #undef MAX_TEXT
 }
@@ -122,7 +122,7 @@ static int dump_one_section(int partno, charset_t charset, int encoding,
 {
 #define MAX_TEXT    512
     printf("SECTION partno=%d length=%llu subtype=%s charset=%s encoding=%s\n",
-            partno, (unsigned long long)data->len, subtype, charset_alias_name(charset), encoding_name(encoding));
+            partno, (unsigned long long)buf_len(data), subtype, charset_alias_name(charset), encoding_name(encoding));
     dump_buf(stdout, data);
     return 0;
 #undef MAX_TEXT
@@ -278,7 +278,7 @@ int main(int argc, char **argv)
 
         while ((c = fgetc(stdin)) != EOF)
             buf_putc(&buf, c);
-        message = message_new_from_data(buf.s, buf.len);
+        message = message_new_from_data(buf_s(&buf), buf_len(&buf));
         dump_message(message);
         if (r) {
             fprintf(stderr, "Error dumping message: %s\n",

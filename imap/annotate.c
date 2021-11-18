@@ -480,7 +480,7 @@ EXPORTED size_t sizeentryatts(const struct entryattlist *l)
 
     for ( ; l ; l = l->next)
         for (av = l->attvalues ; av ; av = av->next)
-            sz += av->value.len;
+            sz += buf_len(&av->value);
     return sz;
 }
 
@@ -1556,7 +1556,7 @@ static void output_entryatt(annotate_state_t *state, const char *entry,
 
         if ((state->attribs & ATTRIB_SIZE_SHARED)) {
             buf_reset(&buf);
-            buf_printf(&buf, SIZE_T_FMT, value->len);
+            buf_printf(&buf, SIZE_T_FMT, buf_len(value));
             appendattvalue(&state->attvalues, "size.shared", &buf);
             state->found |= ATTRIB_SIZE_SHARED;
         }
@@ -1569,7 +1569,7 @@ static void output_entryatt(annotate_state_t *state, const char *entry,
 
         if ((state->attribs & ATTRIB_SIZE_PRIV)) {
             buf_reset(&buf);
-            buf_printf(&buf, SIZE_T_FMT, value->len);
+            buf_printf(&buf, SIZE_T_FMT, buf_len(value));
             appendattvalue(&state->attvalues, "size.priv", &buf);
             state->found |= ATTRIB_SIZE_PRIV;
         }
@@ -1643,8 +1643,8 @@ static void annotation_get_fromfile(annotate_state_t *state,
     if ((f = fopen(path, "r")) && buf_getline(&value, f)) {
 
         /* TODO: we need a buf_chomp() */
-        if (value.s[value.len-1] == '\r')
-            buf_truncate(&value, value.len-1);
+        if (buf_s(&value)[buf_len(&value)-1] == '\r')
+            buf_truncate(&value, buf_len(&value)-1);
     }
     if (f) fclose(f);
     output_entryatt(state, entry->name, "", &value);
@@ -2852,7 +2852,7 @@ EXPORTED int _annotate_lookupmask(const char *mboxname, const char *mboxid,
                                   const char *userid, struct buf *value)
 {
     int r = 0;
-    value->len = 0; /* just in case! */
+    buf_truncate(value, 0); /* just in case! */
 
     init_internal();
 
@@ -2860,10 +2860,10 @@ EXPORTED int _annotate_lookupmask(const char *mboxname, const char *mboxid,
     if (!mboxname_userownsmailbox(userid, mboxname))
         r = _annotate_lookup(mboxname, mboxid, uid, entry, userid, value);
     /* and if there isn't one, we fall through to the shared value */
-    if (value->len == 0)
+    if (buf_len(value) == 0)
         r = _annotate_lookup(mboxname, mboxid, uid, entry, "", value);
     /* and because of Bron's use of NULL rather than "" at FastMail... */
-    if (value->len == 0)
+    if (buf_len(value) == 0)
         r = _annotate_lookup(mboxname, mboxid, uid, entry, NULL, value);
     return r;
 }
@@ -2970,10 +2970,10 @@ static int make_entry(struct buf *data,
     assert(sizeof(modseq_t) <= sizeof(unsigned long long));
     nmodseq = htonll((unsigned long long) modseq);
 
-    l = htonl(value->len);
+    l = htonl(buf_len(value));
     buf_appendmap(data, (const char *)&l, sizeof(l));
 
-    buf_appendmap(data, value->s ? value->s : "", value->len);
+    buf_appendmap(data, buf_s(value) ? buf_s(value) : "", buf_len(value));
     buf_putc(data, '\0');
 
     /*
@@ -3030,7 +3030,7 @@ static int write_entry(struct mailbox *mailbox,
     if (r) goto out;
 
     /* if the value is identical, don't touch the mailbox */
-    if (oldval.len == value->len && (!value->len || !memcmp(oldval.s, value->s, value->len)))
+    if (buf_len(&oldval) == buf_len(value) && (!buf_len(value) || !memcmp(buf_s(&oldval), buf_s(value), buf_len(value))))
         goto out;
 
     if (!maywrite) {
@@ -3041,7 +3041,7 @@ static int write_entry(struct mailbox *mailbox,
     if (mailbox) {
         if (!ignorequota) {
             quota_t qdiffs[QUOTA_NUMRESOURCES] = QUOTA_DIFFS_DONTCARE_INITIALIZER;
-            qdiffs[QUOTA_ANNOTSTORAGE] = value->len - (quota_t)oldval.len;
+            qdiffs[QUOTA_ANNOTSTORAGE] = buf_len(value) - (quota_t)buf_len(&oldval);
             r = mailbox_quota_check(mailbox, qdiffs);
             if (r) goto out;
         }
@@ -3057,7 +3057,7 @@ static int write_entry(struct mailbox *mailbox,
 
     /* zero length annotation is deletion.
      * keep tombstones for message annotations */
-    if (!value->len && !uid) {
+    if (!buf_len(value) && !uid) {
 
 #if DEBUG
         syslog(LOG_ERR, "write_entry: deleting key %s from %s",
@@ -3071,7 +3071,7 @@ static int write_entry(struct mailbox *mailbox,
     else {
         struct buf data = BUF_INITIALIZER;
         unsigned char flags = 0;
-        if (!value->len || value->s == NULL) {
+        if (!buf_len(value) || buf_s(value) == NULL) {
             flags |= ANNOTATE_FLAG_DELETED;
         }
         else {
@@ -3086,11 +3086,11 @@ static int write_entry(struct mailbox *mailbox,
 
 #if DEBUG
         syslog(LOG_ERR, "write_entry: storing key %s (value: %s) to %s (modseq=" MODSEQ_FMT ")",
-                key_as_string(d, key, keylen), value->s, d->filename, modseq);
+                key_as_string(d, key, keylen), buf_s(value), d->filename, modseq);
 #endif
 
         do {
-            r = cyrusdb_store(d->db, key, keylen, data.s, data.len, tid(d));
+            r = cyrusdb_store(d->db, key, keylen, buf_s(&data), buf_len(&data), tid(d));
         } while (r == CYRUSDB_AGAIN);
         buf_free(&data);
     }
@@ -3132,7 +3132,7 @@ EXPORTED int annotatemore_rawwrite(const char *mboxname, const char *entry,
 
     keylen = make_key(mboxname, mboxid, uid, entry, userid, key, sizeof(key));
 
-    if (value->s == NULL) {
+    if (buf_s(value) == NULL) {
         do {
             r = cyrusdb_delete(d->db, key, keylen, tid(d), /*force*/1);
         } while (r == CYRUSDB_AGAIN);
@@ -3143,7 +3143,7 @@ EXPORTED int annotatemore_rawwrite(const char *mboxname, const char *entry,
         make_entry(&data, value, uid, /*flags*/0);
 
         do {
-            r = cyrusdb_store(d->db, key, keylen, data.s, data.len, tid(d));
+            r = cyrusdb_store(d->db, key, keylen, buf_s(&data), buf_len(&data), tid(d));
         } while (r == CYRUSDB_AGAIN);
         buf_free(&data);
     }
@@ -3246,7 +3246,7 @@ static int annotate_canon_value(struct buf *value, int type)
     long whatever = 0;
 
     /* check for NIL */
-    if (value->s == NULL)
+    if (buf_s(value) == NULL)
         return 0;
 
     switch (type) {
@@ -3256,12 +3256,12 @@ static int annotate_canon_value(struct buf *value, int type)
 
     case ATTRIB_TYPE_BOOLEAN:
         /* make sure it is "true" or "false" */
-        if (value->len == 4 && !strncasecmp(value->s, "true", 4)) {
+        if (buf_len(value) == 4 && !strncasecmp(buf_s(value), "true", 4)) {
             buf_reset(value);
             buf_appendcstr(value, "true");
             buf_cstring(value);
         }
-        else if (value->len == 5 && !strncasecmp(value->s, "false", 5)) {
+        else if (buf_len(value) == 5 && !strncasecmp(buf_s(value), "false", 5)) {
             buf_reset(value);
             buf_appendcstr(value, "false");
             buf_cstring(value);
@@ -3273,13 +3273,13 @@ static int annotate_canon_value(struct buf *value, int type)
         /* make sure it is a valid ulong ( >= 0 ) */
         errno = 0;
         buf_cstring(value);
-        uwhatever = strtoul(value->s, &p, 10);
-        if ((p == value->s)             /* no value */
+        uwhatever = strtoul(buf_s(value), &p, 10);
+        if ((p == buf_s(value))             /* no value */
             || (*p != '\0')             /* illegal char */
-            || (unsigned)(p - value->s) != value->len
+            || (unsigned)(p - buf_s(value)) != buf_len(value)
                                         /* embedded NUL */
             || errno                    /* overflow */
-            || strchr(value->s, '-')) { /* negative number */
+            || strchr(buf_s(value), '-')) { /* negative number */
             return IMAP_ANNOTATION_BADVALUE;
         }
         break;
@@ -3288,10 +3288,10 @@ static int annotate_canon_value(struct buf *value, int type)
         /* make sure it is a valid long */
         errno = 0;
         buf_cstring(value);
-        whatever = strtol(value->s, &p, 10);
-        if ((p == value->s)             /* no value */
+        whatever = strtol(buf_s(value), &p, 10);
+        if ((p == buf_s(value))             /* no value */
             || (*p != '\0')             /* illegal char */
-            || (unsigned)(p - value->s) != value->len
+            || (unsigned)(p - buf_s(value)) != buf_len(value)
                                         /* embedded NUL */
             || errno) {                 /* underflow/overflow */
             return IMAP_ANNOTATION_BADVALUE;
@@ -3427,7 +3427,7 @@ static int annotation_set_tofile(annotate_state_t *state
     snprintf(path, sizeof(path), "%s/msg/%s", config_dir, filename);
 
     /* XXX how do we do this atomically with other annotations? */
-    if (entry->shared.s == NULL)
+    if (buf_s(&entry->shared) == NULL)
         return unlink(path);
     else {
         r = cyrus_mkdir(path, 0755);
@@ -3438,7 +3438,7 @@ static int annotation_set_tofile(annotate_state_t *state
             syslog(LOG_ERR, "cannot open %s for writing: %m", path);
             return IMAP_IOERROR;
         }
-        fwrite(entry->shared.s, 1, entry->shared.len, f);
+        fwrite(buf_s(&entry->shared), 1, buf_len(&entry->shared), f);
         fputc('\n', f);
         return fclose(f);
     }
@@ -3476,8 +3476,8 @@ static int annotation_set_mailboxopt(annotate_state_t *state,
 
     newopts = mailbox->i.options;
 
-    if (entry->shared.s &&
-        !strcmp(entry->shared.s, "true")) {
+    if (buf_s(&entry->shared) &&
+        !strcmp(buf_s(&entry->shared), "true")) {
         newopts |= flag;
     } else {
         newopts &= ~flag;
@@ -3505,7 +3505,7 @@ static int annotation_set_pop3showafter(annotate_state_t *state,
 
     assert(mailbox);
 
-    if (entry->shared.s == NULL) {
+    if (buf_s(&entry->shared) == NULL) {
         /* Effectively removes the annotation */
         date = 0;
     }
@@ -3566,7 +3566,7 @@ EXPORTED int specialuse_validate(const char *mboxname, const char *userid,
      */
     if (mboxname) {
         annotatemore_lookup(mboxname, "/specialuse", userid, &mbattribs);
-        if (mbattribs.len) {
+        if (buf_len(&mbattribs)) {
             cur_attribs = strarray_split(buf_cstring(&mbattribs), NULL, 0);
         }
     }
@@ -3666,7 +3666,7 @@ static int annotation_set_specialuse(annotate_state_t *state,
     assert(state->mailbox);
 
     /* Effectively removes the annotation */
-    if (entry->priv.s == NULL) {
+    if (buf_s(&entry->priv) == NULL) {
         r = write_entry(state->mailbox, state->uid, entry->name, state->userid,
                         &entry->priv, /*ignorequota*/0, /*silent*/0, NULL, maywrite);
         goto done;
@@ -3787,7 +3787,7 @@ EXPORTED int annotate_state_store(annotate_state_t *state, struct entryattlist *
                 if (r)
                     goto cleanup;
                 if (nentry) {
-                    buf_init_ro(&nentry->shared, av->value.s, av->value.len);
+                    buf_init_ro(&nentry->shared, buf_s(&av->value), buf_len(&av->value));
                     nentry->have_shared = 1;
                 }
             }
@@ -3807,7 +3807,7 @@ EXPORTED int annotate_state_store(annotate_state_t *state, struct entryattlist *
                 if (r)
                     goto cleanup;
                 if (nentry) {
-                    buf_init_ro(&nentry->priv, av->value.s, av->value.len);
+                    buf_init_ro(&nentry->priv, buf_s(&av->value), buf_len(&av->value));
                     nentry->have_priv = 1;
                 }
             }

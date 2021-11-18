@@ -478,7 +478,7 @@ EXPORTED int quota_write(struct quota *quota, int silent, struct txn **tid)
 
     dlist_printbuf(dl, 0, &buf);
 
-    r = cyrusdb_store(qdb, quota->root, qrlen, buf.s, buf.len, tid);
+    r = cyrusdb_store(qdb, quota->root, qrlen, buf_s(&buf), buf_len(&buf), tid);
 
     switch (r) {
     case CYRUSDB_OK:

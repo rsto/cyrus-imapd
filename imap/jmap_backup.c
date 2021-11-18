@@ -1902,7 +1902,7 @@ static void restore_mailbox_cb(const char *mboxname, void *data, void *rock)
                 annotatemore_lookup(mboxname, annot,
                                     req->accountid, &attrib);
 
-                if (attrib.len) {
+                if (buf_len(&attrib)) {
                     r = annotatemore_write(newmboxname, annot,
                                            req->accountid, &attrib);
                     if (r) {

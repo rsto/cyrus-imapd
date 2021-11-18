@@ -502,8 +502,8 @@ static int do_list(const char *name, void *rock)
             /* Translate internal mboxname to external (URL) */
             buf_setcstr(mboxname, node->name);
             for (; len > 0; len--) {
-                if (mboxname->s[len-1] == '.') mboxname->s[len-1] = '/';
-                else if (mboxname->s[len-1] == '^') mboxname->s[len-1] = '.';
+                if (buf_s(mboxname)[len-1] == '.') buf_s(mboxname)[len-1] = '/';
+                else if (buf_s(mboxname)[len-1] == '^') buf_s(mboxname)[len-1] = '.';
             }
 
             snprintf(path, sizeof(path), "/rss/%s", buf_cstring(mboxname));

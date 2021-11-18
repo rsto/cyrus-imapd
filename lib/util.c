@@ -487,14 +487,14 @@ EXPORTED char *create_tempdir(const char *path, const char *subname)
     char *dbpath = NULL;
 
     buf_setcstr(&buf, path);
-    if (!buf.len || buf.s[buf.len-1] != '/') {
+    if (!buf_len(&buf) || buf_s(&buf)[buf_len(&buf)-1] != '/') {
         buf_putc(&buf, '/');
     }
     buf_appendcstr(&buf, "cyrus-");
     buf_appendcstr(&buf, subname && *subname ? subname : "tmpdir");
     buf_appendcstr(&buf, "-XXXXXX");
     buf_cstring(&buf);
-    dbpath = xstrdupnull(mkdtemp(buf.s));
+    dbpath = xstrdupnull(mkdtemp(buf_s(&buf)));
 
     buf_free(&buf);
     return dbpath;
@@ -1067,46 +1067,90 @@ static inline size_t roundup(size_t size)
 /* this function has a side-effect of always leaving the buffer writable */
 EXPORTED void _buf_ensure(struct buf *buf, size_t n)
 {
-    size_t newlen = buf->len + n;
-    char *s;
+    if (buf->flags == BUF_U_NONE)
+        buf->flags = BUF_U_SSO;
+
+    int is_sso = buf_sso(buf);
+    size_t oldlen = buf_len(buf);
+    size_t newlen = oldlen + n;
 
     assert(newlen); /* we never alloc zero bytes */
 
-    if (buf->alloc >= newlen)
+    if (buf_alloced(buf) >= newlen)
         return;
 
-    if (buf->alloc) {
-        buf->alloc = roundup(newlen);
-        buf->s = xrealloc(buf->s, buf->alloc);
+    if (!is_sso && buf->u.l.alloc) {
+        buf->u.l.alloc = roundup(newlen);
+        buf->u.l.s = xrealloc(buf->u.l.s, buf->u.l.alloc);
     }
     else {
-        buf->alloc = roundup(newlen);
-        s = xmalloc(buf->alloc);
+        size_t newalloc = roundup(newlen);
+        char *s = xmalloc(newalloc);
 
         /* if no allocation, but data exists, it means copy on write.
          * grab a copy of what's there now */
-        if (buf->len) {
-            assert(buf->s);
-            memcpy(s, buf->s, buf->len);
+        if (oldlen) {
+            assert(is_sso || buf->u.l.s);
+            memcpy(s, is_sso ? buf->u.s.s : buf->u.l.s, oldlen);
         }
 
         /* can release MMAP now, we've copied the data out */
-        if (buf->flags & BUF_MMAP) {
-            size_t len = buf->len; /* don't wipe the length, we still need it */
-            map_free((const char **)&buf->s, &len);
-            buf->flags &= ~BUF_MMAP;
+        if (buf->flags == BUF_U_MMAP) {
+            size_t tmplen = oldlen; /* don't wipe the length, we still need it */
+            map_free((const char **)&buf->u.l.s, &tmplen);
         }
 
-        buf->s = s;
+        buf->flags = BUF_U_HEAP;
+        buf->u.l.len = oldlen;
+        buf->u.l.alloc = newalloc;
+        buf->u.l.s = s;
+
     }
 }
+
+static inline void buf_setlen(struct buf *buf, size_t len)
+{
+    if (buf->flags == BUF_U_SSO)
+        buf->u.s.len = len;
+    else
+        buf->u.l.len = len;
+}
+
+#ifdef HAVE_DECLARE_OPTIMIZE
+EXPORTED inline void buf_putc(struct buf *buf, char c)
+    __attribute__((always_inline, optimize("-O3")));
+#endif
+EXPORTED inline void buf_putc(struct buf *buf, char c)
+{
+    if (buf->flags == BUF_U_SSO && BUF_SSO_SIZE >= buf->u.s.len + 1) {
+        buf->u.s.s[buf->u.s.len++] = c;
+        return;
+    }
+
+    if (buf->flags == BUF_U_NONE) {
+        buf->u.s.s[buf->u.s.len++] = c;
+        buf->flags = BUF_U_SSO;
+        return;
+    }
+
+    if (buf->flags == BUF_U_SSO || buf->u.l.alloc < buf->u.l.len + 1)
+        _buf_ensure(buf, 1);
+
+    buf->u.l.s[buf->u.l.len++] = c;
+}
+
 
 EXPORTED const char *buf_cstring(const struct buf *buf)
 {
     struct buf *backdoor = (struct buf*)buf;
+    char *s = buf_s(backdoor);
+    size_t len = buf_len(backdoor);
+    if (len && s[len-1] == '\0')
+        return s;
     buf_ensure(backdoor, 1);
-    backdoor->s[backdoor->len] = '\0';
-    return buf->s;
+    s = buf_s(backdoor);
+    s[len] = '\0';
+    return s;
 }
 
 EXPORTED char *buf_newcstring(struct buf *buf)
@@ -1118,38 +1162,48 @@ EXPORTED char *buf_newcstring(struct buf *buf)
 
 EXPORTED char *buf_release(struct buf *buf)
 {
-    char *ret = (char *)buf_cstring(buf);
-    buf->alloc = 0;
-    buf->s = NULL;
+    char *ret = (char*)buf_cstring(buf);
+    if (buf_sso(buf)) {
+        size_t n = buf->u.s.len + 1;
+        char *retm = xmalloc(n);
+        memcpy(retm, ret, n);
+        ret = retm;
+    }
+    else {
+        buf->u.l.alloc = 0;
+        buf->u.l.s = NULL;
+    }
     buf_free(buf);
     return ret;
 }
 
 EXPORTED const char *buf_cstringnull(const struct buf *buf)
 {
-    if (!buf->s) return NULL;
+    if (!buf_s(buf)) return NULL;
     return buf_cstring(buf);
 }
 
 EXPORTED const char *buf_cstringnull_ifempty(const struct buf *buf)
 {
-    if (!buf->len) return NULL;
+    if (!buf_len(buf)) return NULL;
     return buf_cstring(buf);
 }
 
 EXPORTED char *buf_releasenull(struct buf *buf)
 {
     char *ret = (char *)buf_cstringnull(buf);
-    buf->alloc = 0;
-    buf->s = NULL;
+    if (buf_sso(buf))
+        ret = xstrdupnull(ret);
+    buf->u.l.alloc = 0;
+    buf->u.l.s = NULL;
     buf_free(buf);
     return ret;
 }
 
 EXPORTED void buf_getmap(struct buf *buf, const char **base, size_t *len)
 {
-    *base = buf->s;
-    *len = buf->len;
+    *base = buf_s(buf);
+    *len = buf_len(buf);
 }
 
 /* fetch a single line a file - terminated with \n ONLY.
@@ -1173,16 +1227,7 @@ EXPORTED int buf_getline(struct buf *buf, FILE *fp)
     buf_cstring(buf);
 
     /* EOF and no content, we're done */
-    return (!(buf->len == 0 && c == EOF));
-}
-
-#ifdef HAVE_DECLARE_OPTIMIZE
-EXPORTED inline size_t buf_len(const struct buf *buf)
-    __attribute__((always_inline, optimize("-O3")));
-#endif
-EXPORTED inline size_t buf_len(const struct buf *buf)
-{
-    return buf->len;
+    return (!(buf_len(buf) == 0 && c == EOF));
 }
 
 #ifdef HAVE_DECLARE_OPTIMIZE
@@ -1191,30 +1236,32 @@ EXPORTED inline const char *buf_base(const struct buf *buf)
 #endif
 EXPORTED inline const char *buf_base(const struct buf *buf)
 {
-    return buf->s;
+    return buf_s(buf);
 }
 
 EXPORTED void buf_reset(struct buf *buf)
 {
-    if (buf->flags & BUF_MMAP)
-        map_free((const char **)&buf->s, &buf->len);
-    buf->len = 0;
-    buf->flags = 0;
+    if (buf->flags == BUF_U_MMAP) {
+        map_free((const char **)&buf->u.l.s, &buf->u.l.len);
+        buf->flags = BUF_U_NONE;
+    }
+    buf_setlen(buf, 0);
 }
 
 EXPORTED void buf_truncate(struct buf *buf, ssize_t len)
 {
+    size_t oldlen = buf_len(buf);
     if (len < 0) {
-        len = buf->len + len;
+        len = oldlen + len;
         if (len < 0) len = 0;
     }
-    if ((size_t)len > buf->alloc) {
+    if ((size_t)len > buf_alloced(buf)) {
         /* grow the buffer and zero-fill the new bytes */
-        size_t more = len - buf->len;
+        size_t more = len - oldlen;
         buf_ensure(buf, more);
-        memset(buf->s + buf->len, 0, more);
+        memset(buf_s(buf) + oldlen, 0, more);
     }
-    buf->len = len;
+    buf_setlen(buf, len);
 }
 
 EXPORTED void buf_setcstr(struct buf *buf, const char *str)
@@ -1227,19 +1274,19 @@ EXPORTED void buf_setmap(struct buf *buf, const char *base, size_t len)
     buf_reset(buf);
     if (len) {
         buf_ensure(buf, len);
-        memcpy(buf->s, base, len);
-        buf->len = len;
+        memcpy(buf_s(buf), base, len);
+        buf_setlen(buf, len);
     }
 }
 
 EXPORTED void buf_copy(struct buf *dst, const struct buf *src)
 {
-    buf_setmap(dst, src->s, src->len);
+    buf_setmap(dst, buf_s(src), buf_len(src));
 }
 
 EXPORTED void buf_append(struct buf *dst, const struct buf *src)
 {
-    buf_appendmap(dst, src->s, src->len);
+    buf_appendmap(dst, buf_s(src), buf_len(src));
 }
 
 EXPORTED void buf_appendcstr(struct buf *buf, const char *str)
@@ -1287,8 +1334,9 @@ EXPORTED void buf_appendmap(struct buf *buf, const char *base, size_t len)
 {
     if (len) {
         buf_ensure(buf, len);
-        memcpy(buf->s + buf->len, base, len);
-        buf->len += len;
+        size_t oldlen = buf_len(buf);
+        memcpy(buf_s(buf) + oldlen, base, len);
+        buf_setlen(buf, oldlen + len);
     }
 }
 
@@ -1297,7 +1345,7 @@ EXPORTED void buf_appendmap(struct buf *buf, const char *base, size_t len)
  * data at 'base' instead of a writable copy. */
 EXPORTED void buf_cowappendmap(struct buf *buf, const char *base, unsigned int len)
 {
-    if (!buf->s)
+    if (!buf_s(buf))
         buf_init_ro(buf, base, len);
     else
         buf_appendmap(buf, base, len);
@@ -1307,7 +1355,7 @@ EXPORTED void buf_cowappendmap(struct buf *buf, const char *base, unsigned int l
  * which is a malloc()ed C string buffer of at least 'len' bytes. */
 EXPORTED void buf_cowappendfree(struct buf *buf, char *base, unsigned int len)
 {
-    if (!buf->s)
+    if (!buf_s(buf))
         buf_initm(buf, base, len);
     else {
         buf_appendmap(buf, base, len);
@@ -1329,17 +1377,18 @@ EXPORTED void buf_vprintf(struct buf *buf, const char *fmt, va_list args)
     /* Copy args in case we guess wrong on the size */
     va_copy(ap, args);
 
-    room = buf->alloc - buf->len;
-    n = vsnprintf(buf->s + buf->len, room, fmt, args);
+    size_t oldlen = buf_len(buf);
+    room = buf_alloced(buf) - oldlen;
+    n = vsnprintf(buf_s(buf) + oldlen, room, fmt, args);
 
     if (n >= room) {
         /* woops, we guessed wrong...retry with enough space */
         buf_ensure(buf, n+1);
-        n = vsnprintf(buf->s + buf->len, n+1, fmt, ap);
+        n = vsnprintf(buf_s(buf) + oldlen, n+1, fmt, ap);
     }
     va_end(ap);
 
-    buf->len += n;
+    buf_setlen(buf, oldlen + n);
 }
 
 EXPORTED void buf_printf(struct buf *buf, const char *fmt, ...)
@@ -1356,26 +1405,29 @@ static void buf_replace_buf(struct buf *buf,
                             size_t length,
                             const struct buf *replace)
 {
-    if (offset > buf->len) return;
-    if (offset + length > buf->len)
-        length = buf->len - offset;
+    size_t oldlen = buf_len(buf);
+    if (offset > oldlen) return;
+    if (offset + length > oldlen)
+        length = oldlen - offset;
 
     /* we need buf to be a writable C string now please */
     buf_cstring(buf);
 
-    if (replace->len > length) {
+    if (buf_len(replace) > length) {
         /* string will need to expand */
-        buf_ensure(buf, replace->len - length + 1);
+        buf_ensure(buf, buf_len(replace) - length + 1);
     }
-    if (length != replace->len) {
+    if (length != buf_len(replace)) {
         /* +1 to copy the NULL to keep cstring semantics */
-        memmove(buf->s + offset + replace->len,
-                buf->s + offset + length,
-                buf->len - offset - length + 1);
-        buf->len += (replace->len - length);
+        memmove(buf_s(buf) + offset + buf_len(replace),
+                buf_s(buf) + offset + length,
+                oldlen - offset - length + 1);
+        buf_setlen(buf, oldlen + (buf_len(replace) - length));
     }
-    if (replace->len)
-        memcpy(buf->s + offset, replace->s, replace->len);
+    if (buf_len(replace))
+        memcpy(buf_s(buf) + offset, buf_s(replace), buf_len(replace));
+
+    buf_cstring(buf);
 }
 
 /**
@@ -1398,12 +1450,14 @@ EXPORTED int buf_replace_all(struct buf *buf, const char *match,
     /* we need buf to be a nul terminated string now please */
     buf_cstring(buf);
 
+    char *s = buf_s(buf);
     off = 0;
-    while ((p = strstr(buf->s + off, match))) {
-        off = (p - buf->s);
+    while ((p = strstr(s + off, match))) {
+        off = (p - s);
         buf_replace_buf(buf, off, matchlen, &replace_buf);
         n++;
-        off += replace_buf.len;
+        off += buf_len(&replace_buf);
+        s = buf_s(buf);
     }
 
     return n;
@@ -1417,9 +1471,11 @@ EXPORTED int buf_replace_char(struct buf *buf, char match, char replace)
     /* we need writable, so may as well cstring it */
     buf_cstring(buf);
 
-    for (i = 0; i < buf->len; i++) {
-        if (buf->s[i] == match) {
-            buf->s[i] = replace;
+    char *s = buf_s(buf);
+    size_t len = buf_len(buf);
+    for (i = 0; i < len; i++) {
+        if (s[i] == match) {
+            s[i] = replace;
             n++;
         }
     }
@@ -1446,7 +1502,7 @@ EXPORTED int buf_replace_one_re(struct buf *buf, const regex_t *preg,
     /* we need buf to be a nul terminated string now please */
     buf_cstring(buf);
 
-    if (!regexec(preg, buf->s, 1, &rm, 0)) {
+    if (!regexec(preg, buf_s(buf), 1, &rm, 0)) {
         buf_replace_buf(buf, rm.rm_so, rm.rm_eo - rm.rm_so, &replace_buf);
         return 1;
     }
@@ -1475,9 +1531,9 @@ EXPORTED int buf_replace_all_re(struct buf *buf, const regex_t *preg,
     buf_cstring(buf);
 
     off = 0;
-    while (!regexec(preg, buf->s + off, 1, &rm, (off ? REG_NOTBOL : 0))) {
+    while (!regexec(preg, buf_s(buf) + off, 1, &rm, (off ? REG_NOTBOL : 0))) {
         buf_replace_buf(buf, off + rm.rm_so, rm.rm_eo - rm.rm_so, &replace_buf);
-        off += rm.rm_so + replace_buf.len;
+        off += rm.rm_so + buf_len(&replace_buf);
         n++;
     }
 
@@ -1520,16 +1576,18 @@ EXPORTED void buf_remove(struct buf *dst, unsigned int off, unsigned int len)
  */
 EXPORTED int buf_cmp(const struct buf *a, const struct buf *b)
 {
-    size_t len = MIN(a->len, b->len);
+    size_t alen = buf_len(a);
+    size_t blen = buf_len(b);
+    size_t len = MIN(alen, blen);
     int r = 0;
 
     if (len)
-        r = memcmp(a->s, b->s, len);
+        r = memcmp(buf_s(a), buf_s(b), len);
 
     if (!r) {
-        if (a->len < b->len)
+        if (alen < blen)
             r = -1;
-        else if (a->len > b->len)
+        else if (alen > blen)
             r = 1;
     }
 
@@ -1538,14 +1596,16 @@ EXPORTED int buf_cmp(const struct buf *a, const struct buf *b)
 
 /*
  * Initialise a struct buf to point to read-only data.  The key here is
- * setting buf->alloc=0 which indicates CoW is in effect, i.e. the data
+ * setting buf->u.l.alloc=0 which indicates CoW is in effect, i.e. the data
  * pointed to needs to be copied should it ever be modified.
  */
 EXPORTED void buf_init_ro(struct buf *buf, const char *base, size_t len)
 {
     buf_free(buf);
-    buf->s = (char *)base;
-    buf->len = len;
+    buf->u.l.len = len;
+    buf->u.l.alloc = 0;
+    buf->flags = BUF_U_HEAP;
+    buf->u.l.s = (char *)base;
 }
 
 /*
@@ -1556,8 +1616,9 @@ EXPORTED void buf_init_ro(struct buf *buf, const char *base, size_t len)
 EXPORTED void buf_initm(struct buf *buf, char *base, int len)
 {
     buf_free(buf);
-    buf->s = base;
-    buf->alloc = buf->len = len;
+    buf->u.l.alloc = buf->u.l.len = len;
+    buf->flags = BUF_U_HEAP;
+    buf->u.l.s = base;
 }
 
 /*
@@ -1574,8 +1635,10 @@ EXPORTED void buf_initmcstr(struct buf *buf, char *str)
 EXPORTED void buf_init_ro_cstr(struct buf *buf, const char *str)
 {
     buf_free(buf);
-    buf->s = (char *)str;
-    buf->len = (str ? strlen(str) : 0);
+    buf->u.l.len = (str ? strlen(str) : 0);
+    buf->u.l.alloc = 0;
+    buf->flags = BUF_U_HEAP;
+    buf->u.l.s = (char *)str;
 }
 
 /*
@@ -1586,9 +1649,10 @@ EXPORTED void buf_init_ro_cstr(struct buf *buf, const char *str)
 EXPORTED void buf_refresh_mmap(struct buf *buf, int onceonly, int fd,
                             const char *fname, size_t size, const char *mboxname)
 {
-    assert(!buf->alloc);
-    buf->flags = BUF_MMAP;
-    map_refresh(fd, onceonly, (const char **)&buf->s, &buf->len,
+    assert(!buf_alloced(buf));
+    buf->flags = BUF_U_MMAP;
+    buf->u.l.alloc = 0;
+    map_refresh(fd, onceonly, (const char **)&buf->u.l.s, &buf->u.l.len,
                 size, fname, mboxname);
 }
 
@@ -1596,14 +1660,13 @@ EXPORTED void buf_free(struct buf *buf)
 {
     if (!buf) return;
 
-    if (buf->alloc)
-        free(buf->s);
-    else if (buf->flags & BUF_MMAP)
-        map_free((const char **)&buf->s, &buf->len);
-    buf->alloc = 0;
-    buf->s = NULL;
-    buf->len = 0;
-    buf->flags = 0;
+    if (!buf_sso(buf)) {
+        if (buf->u.l.alloc)
+            free(buf->u.l.s);
+        else if (buf->flags == BUF_U_MMAP)
+            map_free((const char **)&buf->u.l.s, &buf->u.l.len);
+    }
+    memset(buf, 0, sizeof(struct buf));
 }
 
 EXPORTED void buf_move(struct buf *dst, struct buf *src)
@@ -1617,8 +1680,10 @@ EXPORTED int buf_findchar(const struct buf *buf, unsigned int off, int c)
 {
     const char *p;
 
-    if (off < buf->len && (p = memchr(buf->s + off, c, buf->len - off)))
-        return (p - buf->s);
+    const char *s = buf_s(buf);
+    size_t len = buf_len(buf);
+    if (off < len && (p = memchr(s + off, c, len - off)))
+        return (p - s);
     return -1;
 }
 
@@ -1632,7 +1697,8 @@ EXPORTED int buf_findline(const struct buf *buf, const char *line)
 {
     int linelen;
     const char *p;
-    const char *end = buf->s + buf->len;
+    const char *end = buf_s(buf) + buf_len(buf);
+    const char *s = buf_s(buf);
 
     if (!line) return -1;
 
@@ -1641,17 +1707,17 @@ EXPORTED int buf_findline(const struct buf *buf, const char *line)
     linelen = (p ? (size_t)(p - line) : strlen(line));
     if (linelen == 0) return -1;
 
-    for (p = buf->s ;
+    for (p = s ;
          (p = (const char *)memmem(p, end-p, line, linelen)) != NULL ;
          p++) {
 
         /* check the found string is at line boundaries */
-        if (p > buf->s && p[-1] != '\n')
+        if (p > s && p[-1] != '\n')
             continue;
         if ((p+linelen) < end && p[linelen] != '\n')
             continue;
 
-        return (p - buf->s);
+        return (p - s);
     }
 
     return -1;
@@ -1694,15 +1760,17 @@ EXPORTED char *strconcat(const char *s1, ...)
 EXPORTED const char *buf_lcase(struct buf *buf)
 {
     buf_cstring(buf);
-    lcase(buf->s);
-    return buf->s;
+    char *s = buf_s(buf);
+    lcase(s);
+    return s;
 }
 
 EXPORTED const char *buf_ucase(struct buf *buf)
 {
     buf_cstring(buf);
-    ucase(buf->s);
-    return buf->s;
+    char *s = buf_s(buf);
+    ucase(s);
+    return s;
 }
 
 EXPORTED const char *buf_tocrlf(struct buf *buf)
@@ -1711,41 +1779,45 @@ EXPORTED const char *buf_tocrlf(struct buf *buf)
 
     buf_cstring(buf);
 
-    for (i = 0; i < buf->len; i++) {
-        if (buf->s[i] == '\r' && buf->s[i+1] != '\n') {
+    for (i = 0; i < buf_len(buf); i++) {
+        if (buf_s(buf)[i] == '\r' && buf_s(buf)[i+1] != '\n') {
             /* bare \r: add a \n after it */
             buf_insertcstr(buf, i+1, "\n");
         }
-        else if (buf->s[i] == '\n') {
-            if (i == 0 || buf->s[i-1] != '\r') {
+        else if (buf_s(buf)[i] == '\n') {
+            if (i == 0 || buf_s(buf)[i-1] != '\r') {
                 buf_insertcstr(buf, i, "\r");
             }
         }
     }
 
-    return buf->s;
+    return buf_s(buf);
 }
 
 EXPORTED void buf_trim(struct buf *buf)
 {
     size_t i;
-    for (i = 0; i < buf->len; i++) {
-        if (buf->s[i] == ' ') continue;
-        if (buf->s[i] == '\t') continue;
-        if (buf->s[i] == '\r') continue;
-        if (buf->s[i] == '\n') continue;
+    char *s = buf_s(buf);
+    size_t len = buf_len(buf);
+    for (i = 0; i < len; i++) {
+        if (s[i] == ' ') continue;
+        if (s[i] == '\t') continue;
+        if (s[i] == '\r') continue;
+        if (s[i] == '\n') continue;
         break;
     }
     if (i) buf_remove(buf, 0, i);
 
-    for (i = buf->len; i > 1; i--) {
-        if (buf->s[i-1] == ' ') continue;
-        if (buf->s[i-1] == '\t') continue;
-        if (buf->s[i-1] == '\r') continue;
-        if (buf->s[i-1] == '\n') continue;
+    s = buf_s(buf);
+    len = buf_len(buf);
+    for (i = len; i > 1; i--) {
+        if (s[i-1] == ' ') continue;
+        if (s[i-1] == '\t') continue;
+        if (s[i-1] == '\r') continue;
+        if (s[i-1] == '\n') continue;
         break;
     }
-    if (i != buf->len) {
+    if (i != len) {
         buf_truncate(buf, i);
     }
 }
@@ -1854,19 +1926,20 @@ EXPORTED int buf_inflate(struct buf *src, int scheme)
     if (zr != Z_OK) goto err;
 
     /* set up the source */
-    zstrm->next_in = (unsigned char *)src->s;
-    zstrm->avail_in = src->len;
+    zstrm->next_in = (unsigned char *)buf_s(src);
+    zstrm->avail_in = buf_len(src);
 
     /* prepare the destination */
     do {
         buf_ensure(&localbuf, 4096);
+        assert(!buf_sso(&localbuf));
         /* find the buffer */
-        zstrm->next_out = (unsigned char *)localbuf.s + localbuf.len;
-        zstrm->avail_out = localbuf.alloc - localbuf.len;
+        zstrm->next_out = (unsigned char *)localbuf.u.l.s + localbuf.u.l.len;
+        zstrm->avail_out = localbuf.u.l.alloc - localbuf.u.l.len;
         zr = inflate(zstrm, Z_SYNC_FLUSH);
         if (!(zr == Z_OK || zr == Z_STREAM_END || zr == Z_BUF_ERROR))
            goto err;
-        localbuf.len = localbuf.alloc - zstrm->avail_out;
+        localbuf.u.l.len = localbuf.u.l.alloc - zstrm->avail_out;
     } while (zstrm->avail_out == 0);
 
     inflateEnd(zstrm);
@@ -1913,19 +1986,20 @@ EXPORTED int buf_deflate(struct buf *src, int compLevel, int scheme)
     if (zr != Z_OK) goto err;
 
     /* set up the source */
-    zstrm->next_in = (unsigned char *)src->s;
-    zstrm->avail_in = src->len;
+    zstrm->next_in = (unsigned char *)buf_s(src);
+    zstrm->avail_in = buf_len(src);
 
     /* prepare the destination */
     do {
         buf_ensure(&localbuf, 4096);
+        assert(!buf_sso(&localbuf));
         /* find the buffer */
-        zstrm->next_out = (unsigned char *)localbuf.s + localbuf.len;
-        zstrm->avail_out = localbuf.alloc - localbuf.len;
+        zstrm->next_out = (unsigned char *)localbuf.u.l.s + localbuf.u.l.len;
+        zstrm->avail_out = localbuf.u.l.alloc - localbuf.u.l.len;
         zr = deflate(zstrm, Z_SYNC_FLUSH);
         if (!(zr == Z_OK || zr == Z_STREAM_END || zr == Z_BUF_ERROR))
            goto err;
-        localbuf.len = localbuf.alloc - zstrm->avail_out;
+        localbuf.u.l.len = localbuf.u.l.alloc - zstrm->avail_out;
     } while (zstrm->avail_out == 0);
 
     deflateEnd(zstrm);

@@ -110,7 +110,7 @@ EXPORTED bufarray_t *bufarray_dup(const bufarray_t *ba)
     bufarray_truncate(new, ba->count);
     for (i = 0 ; i < ba->count ; i++) {
         new->items[i] = buf_new();
-        buf_setmap(new->items[i], ba->items[i]->s, ba->items[i]->len);
+        buf_setmap(new->items[i], buf_s(ba->items[i]), buf_len(ba->items[i]));
     }
 
     return new;

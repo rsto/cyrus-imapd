@@ -284,7 +284,7 @@ static int dump_me(struct findall_data *data, void *rock)
             }
             break;
         }
-        fwrite(buf.s, 1, buf.len, stdout);
+        fwrite(buf_s(&buf), 1, buf_len(&buf), stdout);
         buf_free(&buf);
     }
 

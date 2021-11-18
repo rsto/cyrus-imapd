@@ -1363,7 +1363,7 @@ static void headermatch_normalize(struct jmap_headermatch *hm, struct buf *val)
 
     /* Fast-path ASCII without consecutive whitespace */
     char *s;
-    for (s = val->s; *s; s++) {
+    for (s = buf_s(val); *s; s++) {
         if (!isascii(*s)) {
             break;
         }

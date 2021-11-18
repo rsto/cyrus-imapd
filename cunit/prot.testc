@@ -118,11 +118,11 @@ static void test_printstring(void)
         buf_appendcstr(&b, "blah ");
     buf_cstring(&b);
     BEGIN;
-    prot_printstring(p, b.s);
+    prot_printstring(p, buf_s(&b));
     prot_flush(p);
     END(str, len);
-    CU_ASSERT_EQUAL(len, b.len+8);
-    CU_ASSERT_STRING_EQUAL(str+8, b.s);
+    CU_ASSERT_EQUAL(len, buf_len(&b)+8);
+    CU_ASSERT_STRING_EQUAL(str+8, buf_s(&b));
     str[8] = '\0';
     CU_ASSERT_STRING_EQUAL(str, "{2500}\r\n");
 
@@ -228,11 +228,11 @@ static void test_printmap(void)
         buf_appendcstr(&b, "blah ");
     buf_cstring(&b);
     BEGIN;
-    prot_printmap(p, b.s, b.len);
+    prot_printmap(p, buf_s(&b), buf_len(&b));
     prot_flush(p);
     END(str, len);
-    CU_ASSERT_EQUAL(len, b.len+8);
-    CU_ASSERT_STRING_EQUAL(str+8, b.s);
+    CU_ASSERT_EQUAL(len, buf_len(&b)+8);
+    CU_ASSERT_STRING_EQUAL(str+8, buf_s(&b));
     str[8] = '\0';
     CU_ASSERT_STRING_EQUAL(str, "{2500}\r\n");
 

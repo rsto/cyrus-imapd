@@ -47,8 +47,7 @@ static void test_get_search_program(void)
         pout = prot_writebuf(&actual_errs); \
         c = get_search_program(pin, pout, searchargs); \
         CU_ASSERT_EQUAL(c, '\r'); \
-        buf_cstring(&actual_errs); \
-        CU_ASSERT_STRING_EQUAL(actual_errs.s, expected_errs); \
+        CU_ASSERT_STRING_EQUAL(buf_cstring(&actual_errs), expected_errs); \
         if (c != EOF) { \
             CU_ASSERT_STRING_EQUAL(charset_canon_name(searchargs->charset), "us-ascii"); \
             CU_ASSERT_PTR_NOT_NULL(searchargs->root); \
@@ -584,7 +583,7 @@ static void test_unserialise(void)
     CU_ASSERT_PTR_NOT_NULL_FATAL(e->value.annot);
     CU_ASSERT_STRING_EQUAL(e->value.annot->entry, "/comment");
     CU_ASSERT_STRING_EQUAL(e->value.annot->attrib, "value");
-    CU_ASSERT_STRING_EQUAL(e->value.annot->value.s, "Brooklyn");
+    CU_ASSERT_STRING_EQUAL(buf_cstring(&e->value.annot->value), "Brooklyn");
     CU_ASSERT_PTR_NULL(e->next);
     CU_ASSERT_PTR_NULL(e->children);
     CU_ASSERT_PTR_NULL(e->parent);
@@ -1133,7 +1132,7 @@ static void test_split_by_folder_and_index(void)
         e = search_expr_unserialise(_in); \
         CU_ASSERT_PTR_NOT_NULL_FATAL(e); \
         search_expr_split_by_folder_and_index(e, add_subquery, &actual); \
-        CU_ASSERT_STRING_EQUAL(actual.s, expected); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&actual), expected); \
         buf_free(&actual); \
     }
 

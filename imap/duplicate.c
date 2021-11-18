@@ -174,7 +174,7 @@ EXPORTED time_t duplicate_check(const duplicate_key_t *dkey)
     if (r) return 0;
 
     do {
-        r = cyrusdb_fetch(dupdb, key.s, key.len,
+        r = cyrusdb_fetch(dupdb, buf_s(&key), buf_len(&key),
                       &data, &len, NULL);
     } while (r == CYRUSDB_AGAIN);
 
@@ -227,7 +227,7 @@ EXPORTED void duplicate_mark(const duplicate_key_t *dkey, time_t mark, unsigned 
     memcpy(data + sizeof(mark), &uid, sizeof(uid));
 
     do {
-        r = cyrusdb_store(dupdb, key.s, key.len,
+        r = cyrusdb_store(dupdb, buf_s(&key), buf_len(&key),
                       data, sizeof(mark)+sizeof(uid), NULL);
     } while (r == CYRUSDB_AGAIN);
 

@@ -82,8 +82,8 @@ struct dbengine {
 
     struct buf data;            /* returned storage for fetch */
 };
-#define DATA(db)        ((db)->data.s ? (db)->data.s : "")
-#define DATALEN(db)     ((db)->data.len)
+#define DATA(db)        (buf_s(&((db)->data)) ? buf_s(&((db)->data)) : "")
+#define DATALEN(db)     (buf_len(&((db)->data)))
 
 struct txn {
     char *fnamenew;
@@ -421,13 +421,13 @@ static int myfetch(struct dbengine *db,
 
     encode(key, keylen, &keybuf);
 
-    offset = bsearch_mem_mbox(keybuf.s, db->base, db->size, 0, &len);
+    offset = bsearch_mem_mbox(buf_s(&keybuf), db->base, db->size, 0, &len);
 
     if (len) {
         if (data) {
-            decode(db->base + offset + keybuf.len + 1,
+            decode(db->base + offset + buf_len(&keybuf) + 1,
                    /* subtract one for \t, and one for the \n */
-                   len - keybuf.len - 2,
+                   len - buf_len(&keybuf) - 2,
                    &db->data);
             if (data) *data = DATA(db);
             if (datalen) *datalen = DATALEN(db);
@@ -545,7 +545,7 @@ static int foreach(struct dbengine *db,
 
     if (prefix) {
         encode(prefix, prefixlen, &prefixbuf);
-        offset = bsearch_mem_mbox(prefixbuf.s, dbbase, db->size, 0, &len);
+        offset = bsearch_mem_mbox(buf_s(&prefixbuf), dbbase, db->size, 0, &len);
     }
     else {
         offset = 0;
@@ -561,10 +561,10 @@ static int foreach(struct dbengine *db,
         else dontmove = 0;
 
         /* does it still match prefix? */
-        if (keybuf.len < (size_t) prefixbuf.len) break;
-        if (prefixbuf.len && memcmp(keybuf.s, prefixbuf.s, prefixbuf.len)) break;
+        if (buf_len(&keybuf) < (size_t) buf_len(&prefixbuf)) break;
+        if (buf_len(&prefixbuf) && memcmp(buf_s(&keybuf), buf_s(&prefixbuf), buf_len(&prefixbuf))) break;
 
-        if (!goodp || goodp(rock, keybuf.s, keybuf.len, DATA(db), DATALEN(db))) {
+        if (!goodp || goodp(rock, buf_s(&keybuf), buf_len(&keybuf), DATA(db), DATALEN(db))) {
             unsigned long ino = db->ino;
             unsigned long sz = db->size;
 
@@ -574,7 +574,7 @@ static int foreach(struct dbengine *db,
             }
 
             /* make callback */
-            r = cb(rock, keybuf.s, keybuf.len, DATA(db), DATALEN(db));
+            r = cb(rock, buf_s(&keybuf), buf_len(&keybuf), DATA(db), DATALEN(db));
             if (r) break;
 
             if (mytid) {
@@ -582,7 +582,7 @@ static int foreach(struct dbengine *db,
                 if (!(ino == db->ino && sz == db->size)) {
                     /* something changed in the file; reseek */
                     buf_cstring(&savebuf);
-                    offset = bsearch_mem_mbox(savebuf.s, db->base, db->size,
+                    offset = bsearch_mem_mbox(buf_s(&savebuf), db->base, db->size,
                                               0, &len);
                     p = db->base + offset;
 
@@ -663,7 +663,7 @@ static int mystore(struct dbengine *db,
     encode(key, keylen, &keybuf);
 
     /* find entry, if it exists */
-    offset = bsearch_mem_mbox(keybuf.s, db->base, db->size, 0, &len);
+    offset = bsearch_mem_mbox(buf_s(&keybuf), db->base, db->size, 0, &len);
 
     /* overwrite? */
     if (len && !overwrite) {
@@ -699,9 +699,9 @@ static int mystore(struct dbengine *db,
     if (data) {
         /* new entry */
         encode(data, datalen, &databuf);
-        WRITEV_ADD_TO_IOVEC(iov, niov, keybuf.s, keybuf.len);
+        WRITEV_ADD_TO_IOVEC(iov, niov, buf_s(&keybuf), buf_len(&keybuf));
         WRITEV_ADD_TO_IOVEC(iov, niov, "\t", 1);
-        WRITEV_ADD_TO_IOVEC(iov, niov, databuf.s, databuf.len);
+        WRITEV_ADD_TO_IOVEC(iov, niov, buf_s(&databuf), buf_len(&databuf));
         WRITEV_ADD_TO_IOVEC(iov, niov, "\n", 1);
     }
 

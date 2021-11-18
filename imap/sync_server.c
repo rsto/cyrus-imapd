@@ -508,28 +508,28 @@ static void cmdloop(void)
         if ((c = getword(sync_in, &cmd)) == EOF)
             break;
 
-        if (!cmd.s[0]) {
+        if (!buf_s(&cmd)[0]) {
             prot_printf(sync_out, "BAD Null command\r\n");
             eatline(sync_in, c);
             continue;
         }
 
-        if (Uislower(cmd.s[0]))
-            cmd.s[0] = toupper((unsigned char) cmd.s[0]);
-        for (p = &cmd.s[1]; *p; p++) {
+        if (Uislower(buf_s(&cmd)[0]))
+            buf_s(&cmd)[0] = toupper((unsigned char) buf_s(&cmd)[0]);
+        for (p = &buf_s(&cmd)[1]; *p; p++) {
             if (Uisupper(*p)) *p = tolower((unsigned char) *p);
         }
 
         /* Must be an admin */
         if (sync_userid && !sync_userisadmin) goto noperm;
 
-        switch (cmd.s[0]) {
+        switch (buf_s(&cmd)[0]) {
         case 'A':
-            if (!strcmp(cmd.s, "Authenticate")) {
+            if (!strcmp(buf_s(&cmd), "Authenticate")) {
                 int haveinitresp = 0;
                 if (c != ' ') goto missingargs;
                 c = getword(sync_in, &arg1);
-                if (!imparse_isatom(arg1.s)) {
+                if (!imparse_isatom(buf_s(&arg1))) {
                     prot_printf(sync_out, "BAD Invalid mechanism\r\n");
                     eatline(sync_in, c);
                     continue;
@@ -546,11 +546,11 @@ static void cmdloop(void)
                     prot_printf(sync_out, "BAD Already authenticated\r\n");
                     continue;
                 }
-                cmd_authenticate(arg1.s, haveinitresp ? arg2.s : NULL);
+                cmd_authenticate(buf_s(&arg1), haveinitresp ? buf_s(&arg2) : NULL);
                 continue;
             }
             if (!sync_userid) goto nologin;
-            if (!strcmp(cmd.s, "Apply")) {
+            if (!strcmp(buf_s(&cmd), "Apply")) {
                 kl = sync_parseline(sync_in);
                 if (kl) {
                     cmd_apply(kl, reserve_list);
@@ -558,7 +558,7 @@ static void cmdloop(void)
                 }
                 else {
                     xsyslog(LOG_ERR, "IOERROR: received bad command",
-                                     "command=<%s>", cmd.s);
+                                     "command=<%s>", buf_s(&cmd));
                     prot_printf(sync_out, "BAD IMAP_PROTOCOL_ERROR Failed to parse APPLY line\r\n");
                 }
                 continue;
@@ -566,19 +566,19 @@ static void cmdloop(void)
             break;
 
         case 'C':
-            if (!strcmp(cmd.s, "Compress")) {
+            if (!strcmp(buf_s(&cmd), "Compress")) {
                 if (c != ' ') goto missingargs;
                 c = getword(sync_in, &arg1);
                 if (c == '\r') c = prot_getc(sync_in);
                 if (c != '\n') goto extraargs;
-                cmd_compress(arg1.s);
+                cmd_compress(buf_s(&arg1));
                 continue;
             }
             break;
 
         case 'G':
             if (!sync_userid) goto nologin;
-            if (!strcmp(cmd.s, "Get")) {
+            if (!strcmp(buf_s(&cmd), "Get")) {
                 kl = sync_parseline(sync_in);
                 if (kl) {
                     cmd_get(kl);
@@ -586,7 +586,7 @@ static void cmdloop(void)
                 }
                 else {
                     xsyslog(LOG_ERR, "IOERROR: received bad command",
-                                     "command=<%s>", cmd.s);
+                                     "command=<%s>", buf_s(&cmd));
                     prot_printf(sync_out, "BAD IMAP_PROTOCOL_ERROR Failed to parse GET line\r\n");
                 }
                 continue;
@@ -594,7 +594,7 @@ static void cmdloop(void)
             break;
 
         case 'E':
-            if (!strcmp(cmd.s, "Exit")) {
+            if (!strcmp(buf_s(&cmd), "Exit")) {
                 if (c == '\r') c = prot_getc(sync_in);
                 if (c != '\n') goto extraargs;
                 prot_printf(sync_out, "OK Finished\r\n");
@@ -604,7 +604,7 @@ static void cmdloop(void)
             break;
 
         case 'N':
-            if (!strcmp(cmd.s, "Noop")) {
+            if (!strcmp(buf_s(&cmd), "Noop")) {
                 if (c == '\r') c = prot_getc(sync_in);
                 if (c != '\n') goto extraargs;
                 prot_printf(sync_out, "OK Noop completed\r\n");
@@ -613,7 +613,7 @@ static void cmdloop(void)
             break;
 
         case 'R':
-            if (!strcmp(cmd.s, "Restart")) {
+            if (!strcmp(buf_s(&cmd), "Restart")) {
                 if (c == '\r') c = prot_getc(sync_in);
                 if (c != '\n') goto extraargs;
                 /* just clear the GUID cache */
@@ -622,7 +622,7 @@ static void cmdloop(void)
                 continue;
             }
             if (!sync_userid) goto nologin;
-            if (!strcmp(cmd.s, "Restore")) {
+            if (!strcmp(buf_s(&cmd), "Restore")) {
                 kl = sync_parseline(sync_in);
                 if (kl) {
                     cmd_restore(kl, reserve_list);
@@ -630,7 +630,7 @@ static void cmdloop(void)
                 }
                 else {
                     xsyslog(LOG_ERR, "IOERROR: received bad command",
-                                     "command=<%s>", cmd.s);
+                                     "command=<%s>", buf_s(&cmd));
                     prot_printf(sync_out, "BAD IMAP_PROTOCOL_ERROR Failed to parse RESTORE line\r\n");
                 }
                 continue;
@@ -638,7 +638,7 @@ static void cmdloop(void)
             break;
 
         case 'S':
-            if (!strcmp(cmd.s, "Starttls") && tls_enabled()) {
+            if (!strcmp(buf_s(&cmd), "Starttls") && tls_enabled()) {
                 if (c == '\r') c = prot_getc(sync_in);
                 if (c != '\n') goto extraargs;
 
@@ -665,7 +665,7 @@ static void cmdloop(void)
         }
 
         xsyslog(LOG_ERR, "IOERROR: received bad command",
-                         "command=<%s>", cmd.s);
+                         "command=<%s>", buf_s(&cmd));
         prot_printf(sync_out, "BAD IMAP_PROTOCOL_ERROR Unrecognized command\r\n");
         eatline(sync_in, c);
         continue;
@@ -682,12 +682,12 @@ static void cmdloop(void)
         continue;
 
     missingargs:
-        prot_printf(sync_out, "BAD Missing required argument to %s\r\n", cmd.s);
+        prot_printf(sync_out, "BAD Missing required argument to %s\r\n", buf_s(&cmd));
         eatline(sync_in, c);
         continue;
 
     extraargs:
-        prot_printf(sync_out, "BAD Unexpected extra arguments to %s\r\n", cmd.s);
+        prot_printf(sync_out, "BAD Unexpected extra arguments to %s\r\n", buf_s(&cmd));
         eatline(sync_in, c);
         continue;
     }

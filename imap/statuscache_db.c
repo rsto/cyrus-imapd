@@ -147,7 +147,7 @@ static void statuscache_read_index(const char *mboxname, struct statusdata *sdat
 
     /* Check if there is an entry in the database */
     statuscache_buildkey(mboxname, NULL, &keybuf);
-    int r = cyrusdb_fetch(statuscachedb, keybuf.s, keybuf.len, &data, &datalen, NULL);
+    int r = cyrusdb_fetch(statuscachedb, buf_s(&keybuf), buf_len(&keybuf), &data, &datalen, NULL);
     buf_free(&keybuf);
 
     if (r || !data || !datalen)
@@ -215,7 +215,7 @@ static void statuscache_read_seen(const char *mboxname, const char *userid,
 
     /* Check if there is an entry in the database */
     statuscache_buildkey(mboxname, userid, &keybuf);
-    int r = cyrusdb_fetch(statuscachedb, keybuf.s, keybuf.len, &data, &datalen, NULL);
+    int r = cyrusdb_fetch(statuscachedb, buf_s(&keybuf), buf_len(&keybuf), &data, &datalen, NULL);
     buf_free(&keybuf);
 
     if (r || !data || !datalen)
@@ -282,7 +282,7 @@ static int statuscache_store(const char *mboxname,
 
     /* if we don't have a full index, just nuke the key */
     if (!sdata || (sdata->statusitems & STATUS_INDEXITEMS) != STATUS_INDEXITEMS) {
-        r = cyrusdb_delete(statuscachedb, keybuf.s, keybuf.len, tidptr, 1);
+        r = cyrusdb_delete(statuscachedb, buf_s(&keybuf), buf_len(&keybuf), tidptr, 1);
         if (r != CYRUSDB_OK) {
             syslog(LOG_ERR, "DBERROR: error deleting statuscache for: %s (%s)",
                    mboxname, cyrusdb_strerror(r));
@@ -298,7 +298,7 @@ static int statuscache_store(const char *mboxname,
                        sdata->uidvalidity, sdata->mboptions, sdata->size,
                        sdata->createdmodseq, sdata->highestmodseq);
 
-    r = cyrusdb_store(statuscachedb, keybuf.s, keybuf.len, databuf.s, databuf.len, tidptr);
+    r = cyrusdb_store(statuscachedb, buf_s(&keybuf), buf_len(&keybuf), buf_s(&databuf), buf_len(&databuf), tidptr);
 
     if (r != CYRUSDB_OK) {
         syslog(LOG_ERR, "DBERROR: error updating database: %s (%s)",
@@ -326,7 +326,8 @@ static int statuscache_store(const char *mboxname,
                        sdata->recent, sdata->unseen,
                        sdata->highestmodseq);
 
-    r = cyrusdb_store(statuscachedb, keybuf.s, keybuf.len, databuf.s, databuf.len, tidptr);
+    r = cyrusdb_store(statuscachedb, buf_s(&keybuf), buf_len(&keybuf),
+            buf_s(&databuf), buf_len(&databuf), tidptr);
 
     if (r != CYRUSDB_OK) {
         syslog(LOG_ERR, "DBERROR: error updating database: %s (%s)",

@@ -177,10 +177,10 @@ static int parseheader(struct protstream *fin, FILE *fout,
                 buf_cstring(&name);
                 /* see if this header is in our skip list */
                 for (skip = skipheaders;
-                     skip && *skip && strcasecmp(name.s, *skip); skip++);
+                     skip && *skip && strcasecmp(buf_s(&name), *skip); skip++);
                 if (!skip || !*skip) {
                     /* write the header name to the output */
-                    buf_appendcstr(&raw, name.s);
+                    buf_appendcstr(&raw, buf_s(&name));
                     skip = NULL;
                 }
                 s = (c == ':' ? BODY_START : COLON);
@@ -303,9 +303,9 @@ static int parseheader(struct protstream *fin, FILE *fout,
     /* Note: xstrdup()ing the string ensures we return
      * a minimal length string with no allocation slack
      * at the end */
-    if (headname != NULL) *headname = xstrdup(name.s);
-    if (contents != NULL) *contents = xstrdup(body.s);
-    if (rawvalue != NULL) *rawvalue = xstrdup(raw.s);
+    if (headname != NULL) *headname = xstrdup(buf_s(&name));
+    if (contents != NULL) *contents = xstrdup(buf_s(&body));
+    if (rawvalue != NULL) *rawvalue = xstrdup(buf_s(&raw));
 
     return 0;
 }

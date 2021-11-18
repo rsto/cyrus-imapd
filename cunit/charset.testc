@@ -1210,14 +1210,14 @@ static void test_charset_decode(void)
         int _r; \
         _r = charset_decode(&_dst, _in, _inlen, _enc); \
         CU_ASSERT(_r == 0); \
-        CU_ASSERT(_dst.len == _wantlen); \
+        CU_ASSERT(buf_len(&_dst) == _wantlen); \
         { \
             const char *p; \
-            for(p = _dst.s; p < _dst.s + _dst.len; p++) { \
+            for(p = buf_s(&_dst); p < buf_s(&_dst) + buf_len(&_dst); p++) { \
                 if (0) fprintf(stderr, "%x\n", *p); \
             } \
         } \
-        CU_ASSERT(memcmp(_dst.s, _want, _wantlen) == 0); \
+        CU_ASSERT(memcmp(buf_s(&_dst), _want, _wantlen) == 0); \
         buf_free(&_dst); \
     }
 

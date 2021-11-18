@@ -307,7 +307,7 @@ static int index_one(const char *name, int blocking)
                                     &attrib);
 
             if (r ||                            /* error */
-                attrib.s ||                     /* found an entry */
+                buf_s(&attrib) ||                     /* found an entry */
                 !buf[0]) {                      /* done recursing */
                 break;
             }
@@ -322,7 +322,7 @@ static int index_one(const char *name, int blocking)
                 buf[domainlen] = '\0';
         }
 
-        if (r || !attrib.s || strcasecmp(attrib.s, "true")) {
+        if (r || !buf_s(&attrib) || strcasecmp(buf_s(&attrib), "true")) {
             buf_free(&attrib);
             free(extname);
             return 0;

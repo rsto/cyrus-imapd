@@ -628,9 +628,9 @@ static int do_append(SquatReceiverData *d, const struct buf *text)
 
     if (d->verbose > 3)
         syslog(LOG_ERR, "squat: writing %llu bytes into message %u",
-               (unsigned long long)text->len, d->uid);
+               (unsigned long long)buf_len(text), d->uid);
 
-    s = squat_index_append_document(d->index, text->s, text->len);
+    s = squat_index_append_document(d->index, buf_s(text), buf_len(text));
     if (s != SQUAT_OK) {
         syslog(LOG_ERR, "squat: error writing index data "
                         "for mailbox %s uid %u: %s",
@@ -638,8 +638,8 @@ static int do_append(SquatReceiverData *d, const struct buf *text)
                         squat_strerror(s));
         return IMAP_IOERROR;
     }
-    d->mailbox_stats.indexed_bytes += text->len;
-    d->total_stats.indexed_bytes += text->len;
+    d->mailbox_stats.indexed_bytes += buf_len(text);
+    d->total_stats.indexed_bytes += buf_len(text);
     return 0;
 }
 
@@ -651,7 +651,7 @@ static int append_text(search_text_receiver_t *rx,
     int s = 0;      /* SQUAT error */
 
     if (!d->doc_is_open) {
-        if (text->len + d->pending_text.len < SQUAT_WORD_SIZE) {
+        if (buf_len(text) + buf_len(&d->pending_text) < SQUAT_WORD_SIZE) {
             /* not enough text yet */
             buf_append(&d->pending_text, text);
             return 0;
@@ -673,7 +673,7 @@ static int append_text(search_text_receiver_t *rx,
         d->doc_is_open = 1;
 
         /* flush any pending text */
-        if (d->pending_text.len)
+        if (buf_len(&d->pending_text))
             r = do_append(d, &d->pending_text);
         buf_reset(&d->pending_text);
     }

@@ -778,7 +778,7 @@ static int export_addressbook(struct transaction_t *txn)
     r = annotatemore_lookupmask_mbox(mailbox, displayname_annot,
                                      httpd_userid, &attrib);
     /* fall back to last part of mailbox name */
-    if (r || !attrib.len) buf_setcstr(&attrib, strrchr(mailbox_name(mailbox), '.') + 1);
+    if (r || !buf_len(&attrib)) buf_setcstr(&attrib, strrchr(mailbox_name(mailbox), '.') + 1);
 
     buf_reset(&txn->buf);
     buf_printf(&txn->buf, "%s.%s", buf_cstring(&attrib), mime->file_ext);
@@ -897,7 +897,7 @@ static int list_addr_cb(const mbentry_t *mbentry, void *rock)
     r = annotatemore_lookupmask_mbe(mbentry, displayname_annot,
                                     httpd_userid, &displayname);
     /* fall back to the last part of the mailbox name */
-    if (r || !displayname.len) buf_setcstr(&displayname, shortname);
+    if (r || !buf_len(&displayname)) buf_setcstr(&displayname, shortname);
 
     /* Make sure we have room in our array */
     if (lrock->len == lrock->alloc) {
@@ -1469,11 +1469,11 @@ static int propfind_addrdata(const xmlChar *name, xmlNsPtr ns,
 
         if (!fctx->record) return HTTP_NOT_FOUND;
 
-        if (!fctx->msg_buf.len)
+        if (!buf_len(&fctx->msg_buf))
             mailbox_map_record(fctx->mailbox, fctx->record, &fctx->msg_buf);
-        if (!fctx->msg_buf.len) return HTTP_SERVER_ERROR;
+        if (!buf_len(&fctx->msg_buf)) return HTTP_SERVER_ERROR;
 
-        data = fctx->msg_buf.s + fctx->record->header_size;
+        data = buf_s(&fctx->msg_buf) + fctx->record->header_size;
         datalen = fctx->record->size - fctx->record->header_size;
 
         if (strarray_size(partial)) {
@@ -1778,10 +1778,10 @@ static int apply_propfilter(struct prop_filter *propfilter,
     if (propfilter->param || (propfilter->kind == VCARD_ANY_PROPERTY)) {
         /* Load message containing the resource and parse vcard data */
         if (!vcard) {
-            if (!fctx->msg_buf.len) {
+            if (!buf_len(&fctx->msg_buf)) {
                 mailbox_map_record(fctx->mailbox, fctx->record, &fctx->msg_buf);
             }
-            if (fctx->msg_buf.len) {
+            if (buf_len(&fctx->msg_buf)) {
                 vcard = fctx->obj =
                     vcard_parse_string(buf_cstring(&fctx->msg_buf) +
                                        fctx->record->header_size);

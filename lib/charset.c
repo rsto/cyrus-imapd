@@ -1208,7 +1208,7 @@ static void html_saw_tag(struct convert_rock *rock)
     enum html_state state = html_top(s);
 
     buf_cstring(&s->name);
-    tag = s->name.s;
+    tag = buf_s(&s->name);
 
     if (charset_debug)
         fprintf(stderr, "html_saw_tag() state=%s tag=\"%s\" ends=%s,%s\n",
@@ -1495,7 +1495,7 @@ restart:
     case HMUDECOPEN:        /* 8.2.4.45 Markup declaration open state */
         if (c == '-') {
             buf_putc(&s->name, c);
-            if (s->name.len == 2)
+            if (buf_len(&s->name) == 2)
                 html_go(s, HCOMMSTART);
         }
         else {
@@ -3223,8 +3223,8 @@ EXPORTED int charset_extract(int (*cb)(const struct buf *, void *),
     /* point to the buffer for easy block sending */
     out = (struct buf *)tobuffer->state;
 
-    for (i = 0; i < data->len; i++) {
-        convert_putc(input, (unsigned char)data->s[i]);
+    for (i = 0; i < buf_len(data); i++) {
+        convert_putc(input, (unsigned char)buf_s(data)[i]);
 
         /* process a block of output every so often */
         if (buf_len(out) > 4096) {
@@ -3236,7 +3236,7 @@ EXPORTED int charset_extract(int (*cb)(const struct buf *, void *),
     if (!r) {
         /* finish it */
         convert_flush(input);
-        if (out->len) {
+        if (buf_len(out)) {
             r = cb(out, rock);
         }
     }
@@ -3290,7 +3290,7 @@ EXPORTED const char *charset_decode_mimebody(const char *msg_base, size_t len, i
     /* extract the string from the buffer */
     {
         struct buf *buf = (struct buf *)tobuffer->state;
-        *outlen = buf->len;
+        *outlen = buf_len(buf);
         *decbuf = buf_release(buf);
     }
 

@@ -13,10 +13,10 @@
 
 static char *buf_dup_cstring(struct buf *buf)
 {
-    char *ret = xstrndup(buf->s, buf->len);
+    char *ret = xstrndup(buf_s(buf), buf_len(buf));
     /* more space efficient than returning overlength buffers, and
      * you would just wind up mallocing another buffer anyway */
-    buf->len = 0;
+    buf_reset(buf);
     return ret;
 }
 
@@ -343,7 +343,7 @@ static int _parse_entry_key(struct vparse_state *state)
         case '\n':
             if (state->p[1] == ' ' || state->p[1] == '\t') /* wrapped line */
                 INC(2);
-            else if (!state->buf.len) /* no key yet?  blank intermediate lines are OK */
+            else if (!buf_len(&state->buf)) /* no key yet?  blank intermediate lines are OK */
                 INC(1);
             else
                 return PE_NAME_EOL;

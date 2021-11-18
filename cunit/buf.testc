@@ -15,24 +15,24 @@ static void test_simple(void)
     struct buf b = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_appendcstr(&b, WORD0);
     buf_putc(&b, ' ');
     buf_appendcstr(&b, WORD1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1+sizeof(WORD1)-1+1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1+sizeof(WORD1)-1+1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     s = buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1+sizeof(WORD1)-1+1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1+sizeof(WORD1)-1+1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
     CU_ASSERT_PTR_NOT_NULL(s);
     CU_ASSERT_STRING_EQUAL(s, WORD0" "WORD1);
 
@@ -50,27 +50,27 @@ static void test_map(void)
     const char *map;
     size_t len;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_appendmap(&b, WORD0, sizeof(WORD0)-1);
     buf_putc(&b, ' ');
     buf_appendmap(&b, WORD1, 2);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+2);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+2);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     map = (void *)0xdeadbeef;
     len = 42;
     buf_getmap(&b, &map, &len);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+2);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_EQUAL(len, b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+2);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(len, buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
     CU_ASSERT_PTR_NOT_NULL(map);
     CU_ASSERT(!memcmp(map, WORD0" ip", sizeof(WORD0)+2));
 
@@ -88,11 +88,11 @@ static void test_initm(void)
     char *s = xstrdup(WORD0);
 
     buf_initm(&b, s, sizeof(WORD0)-1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, WORD0, sizeof(WORD0)-1));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), WORD0, sizeof(WORD0)-1));
 
     /* we don't free(s) - the buf_free() should do that */
     buf_free(&b);
@@ -105,11 +105,11 @@ static void test_initmcstr(void)
     char *s = xstrdup("terry richardson fanny pack");
 
     buf_initmcstr(&b, s);
-    CU_ASSERT_EQUAL(b.len, strlen(s));
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, s, strlen(s)));
+    CU_ASSERT_EQUAL(buf_len(&b), strlen(s));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), s, strlen(s)));
 
     /* we don't free(s) - the buf_free() should do that */
     buf_free(&b);
@@ -124,10 +124,10 @@ static void test_long(void)
 #define N 10000
     char tt[SZ+1];
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     for (i = 0 ; i < N ; i++) {
         snprintf(tt, sizeof(tt), "%c%05d", 'A'+(char)(i%26), i);
@@ -135,15 +135,15 @@ static void test_long(void)
     }
     buf_cstring(&b);
 
-    CU_ASSERT_EQUAL(b.len, SZ*N);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), SZ*N);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     exp = xmalloc(SZ*N+1);
     for (i = 0 ; i < N ; i++)
         snprintf(exp+SZ*i, SZ+1, "%c%05d", 'A'+(char)(i%26), i);
-    CU_ASSERT(!strcmp(b.s, exp));
+    CU_ASSERT(!strcmp(buf_s(&b), exp));
     free(exp);
 
     buf_free(&b);
@@ -156,19 +156,19 @@ static void test_setcstr(void)
 #define WORD0   "lorem"
     struct buf b = BUF_INITIALIZER;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_setcstr(&b, WORD0);
     buf_cstring(&b);
 
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0);
 
     buf_free(&b);
 #undef WORD0
@@ -179,19 +179,19 @@ static void test_setmap(void)
 #define WORD1   "ipsum"
     struct buf b = BUF_INITIALIZER;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_setmap(&b, WORD1, sizeof(WORD1)-1);
     buf_cstring(&b);
 
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD1);
 
     buf_free(&b);
 #undef WORD1
@@ -205,31 +205,31 @@ static void test_append(void)
     struct buf b2 = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
-    CU_ASSERT_EQUAL(b2.len, 0);
-    CU_ASSERT(b2.alloc >= b2.len);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT_PTR_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), 0);
+    CU_ASSERT(buf_alloced(&b2) >= buf_len(&b2));
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT_EQUAL(0, buf_len(&b2));
 
     buf_setmap(&b, WORD0, sizeof(WORD0)-1);
     buf_setmap(&b2, WORD1, sizeof(WORD1)-1);
     buf_append(&b, &b2);
 
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1+sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1+sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
     s = buf_cstring(&b);
     CU_ASSERT_STRING_EQUAL(s, WORD0""WORD1);
 
-    CU_ASSERT_EQUAL(b2.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT(b2.alloc >= b2.len);
-    CU_ASSERT_PTR_NOT_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT(buf_alloced(&b2) >= buf_len(&b2));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b2));
     s = buf_cstring(&b2);
     CU_ASSERT_STRING_EQUAL(s, WORD1);
 
@@ -249,19 +249,19 @@ static void test_appendbit32(void)
     };
     struct buf b = BUF_INITIALIZER;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_appendbit32(&b, HEX0);
     buf_appendbit32(&b, HEX1);
 
-    CU_ASSERT_EQUAL(b.len, 8);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, HEX, sizeof(HEX)));
+    CU_ASSERT_EQUAL(buf_len(&b), 8);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), HEX, sizeof(HEX)));
 
     buf_free(&b);
 #undef HEX0
@@ -275,18 +275,18 @@ static void test_reset(void)
     struct buf b = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_appendcstr(&b, WORD0);
     buf_reset(&b);
     buf_appendcstr(&b, WORD1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     s = buf_cstring(&b);
     CU_ASSERT_PTR_NOT_NULL(s);
@@ -306,31 +306,31 @@ static void test_copy(void)
     struct buf b2 = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
-    CU_ASSERT_EQUAL(b2.len, 0);
-    CU_ASSERT(b2.alloc >= b2.len);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT_PTR_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), 0);
+    CU_ASSERT(buf_alloced(&b2) >= buf_len(&b2));
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT_EQUAL(0, buf_len(&b2));
 
     buf_setmap(&b, WORD0, sizeof(WORD0)-1);
     buf_setmap(&b2, WORD1, sizeof(WORD1)-1);
     buf_copy(&b, &b2);
 
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
     s = buf_cstring(&b);
     CU_ASSERT_STRING_EQUAL(s, WORD1);
 
-    CU_ASSERT_EQUAL(b2.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT(b2.alloc >= b2.len);
-    CU_ASSERT_PTR_NOT_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT(buf_alloced(&b2) >= buf_len(&b2));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b2));
     s = buf_cstring(&b2);
     CU_ASSERT_STRING_EQUAL(s, WORD1);
 
@@ -348,31 +348,31 @@ static void test_move(void)
     struct buf b2 = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
-    CU_ASSERT_EQUAL(b2.len, 0);
-    CU_ASSERT(b2.alloc >= b2.len);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT_PTR_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), 0);
+    CU_ASSERT(buf_alloced(&b2) >= buf_len(&b2));
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT_EQUAL(0, buf_len(&b2));
 
     buf_setmap(&b, WORD0, sizeof(WORD0)-1);
     buf_setmap(&b2, WORD1, sizeof(WORD1)-1);
     buf_move(&b, &b2);
 
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
     s = buf_cstring(&b);
     CU_ASSERT_STRING_EQUAL(s, WORD1);
 
-    CU_ASSERT_EQUAL(b2.len, 0);
-    CU_ASSERT_EQUAL(buf_len(&b2), b2.len);
-    CU_ASSERT_EQUAL(b2.alloc, 0);
-    CU_ASSERT_PTR_NULL(b2.s);
+    CU_ASSERT_EQUAL(buf_len(&b2), 0);
+    CU_ASSERT_EQUAL(buf_len(&b2), buf_len(&b2));
+    CU_ASSERT_EQUAL(0, buf_alloced(&b2));
+    CU_ASSERT_EQUAL(0, buf_len(&b2));
 
     buf_free(&b);
     buf_free(&b2);
@@ -389,16 +389,16 @@ static void test_printf(void)
     struct buf b = BUF_INITIALIZER;
     const char *s;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_printf(&b, WORD0" %s 0x%x %d", WORD1, HEX0, DEC0);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+sizeof(WORD1)+16);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+sizeof(WORD1)+16);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     s = buf_cstring(&b);
     CU_ASSERT_PTR_NOT_NULL(s);
@@ -420,10 +420,10 @@ static void test_long_printf(void)
 #define SZ  6
 #define N 10000
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     exp = xmalloc(SZ*N+1);
     for (i = 0 ; i < N ; i++)
@@ -432,10 +432,10 @@ static void test_long_printf(void)
     buf_printf(&b, "x%sy", exp);
     s = buf_cstring(&b);
 
-    CU_ASSERT_EQUAL(b.len, SZ*N+2);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), SZ*N+2);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
 
     CU_ASSERT_PTR_NOT_NULL(s);
     CU_ASSERT_EQUAL(s[0], 'x');
@@ -462,154 +462,154 @@ static void test_replace_all(void)
 #define WORD4   "amet"
     struct buf b = BUF_INITIALIZER;
     unsigned int n;
-    char *buf_s;
+    char *bufstr;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     /* simple test: a single replacement */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     n = buf_replace_all(&b, WORD0, WORD0REP);
     CU_ASSERT_EQUAL(n, 1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0REP" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0REP" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0REP" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0REP" "WORD1);
 
     /* simple test: failure to match */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     n = buf_replace_all(&b, WORD4, WORD0REP);
     CU_ASSERT_EQUAL(n, 0);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     /* a replacement which doesn't change the size */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
-    buf_s = b.s;
+    bufstr = buf_s(&b);
     n = buf_replace_all(&b, WORD0, WORD0REP2);
     CU_ASSERT_EQUAL(n, 1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0REP2" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_PTR_EQUAL(b.s, buf_s);  /* no size change => no realloc */
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0REP2" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0REP2" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), bufstr);  /* no size change => no realloc */
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0REP2" "WORD1);
 
     /* a replacement which shrinks the size */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     /* a replacement with an empty string */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
-    buf_s = b.s;
+    bufstr = buf_s(&b);
     n = buf_replace_all(&b, WORD0, "");
     CU_ASSERT_EQUAL(n, 1);
-    CU_ASSERT_EQUAL(b.len, sizeof(" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_PTR_EQUAL(b.s, buf_s);  /* no size change => no realloc */
-    CU_ASSERT_STRING_EQUAL(b.s, " "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), bufstr);  /* no size change => no realloc */
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), " "WORD1);
 
     /* a replacement with a NULL string */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
-    buf_s = b.s;
+    bufstr = buf_s(&b);
     n = buf_replace_all(&b, WORD0, NULL);
     CU_ASSERT_EQUAL(n, 1);
-    CU_ASSERT_EQUAL(b.len, sizeof(" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_PTR_EQUAL(b.s, buf_s);  /* no size change => no realloc */
-    CU_ASSERT_STRING_EQUAL(b.s, " "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), bufstr);  /* no size change => no realloc */
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), " "WORD1);
 
     /* multiple replacements, including abutted ones */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
 
     n = buf_replace_all(&b, WORD0, WORD0REP2);
     CU_ASSERT_EQUAL(n, 4);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0REP2" "WORD1" "WORD2" "WORD0REP2" "WORD3" "WORD0REP2""WORD0REP2" "WORD4)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0REP2" "WORD1" "WORD2" "WORD0REP2" "WORD3" "WORD0REP2""WORD0REP2" "WORD4);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0REP2" "WORD1" "WORD2" "WORD0REP2" "WORD3" "WORD0REP2""WORD0REP2" "WORD4)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0REP2" "WORD1" "WORD2" "WORD0REP2" "WORD3" "WORD0REP2""WORD0REP2" "WORD4);
 
     /* multiple replacements with a replacement which contains the match */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1" "WORD2" "WORD0" "WORD3" "WORD0""WORD0" "WORD4);
 
     n = buf_replace_all(&b, WORD0, WORD0REP4);
     CU_ASSERT_EQUAL(n, 4);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0REP4" "WORD1" "WORD2" "WORD0REP4" "WORD3" "WORD0REP4""WORD0REP4" "WORD4)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0REP4" "WORD1" "WORD2" "WORD0REP4" "WORD3" "WORD0REP4""WORD0REP4" "WORD4);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0REP4" "WORD1" "WORD2" "WORD0REP4" "WORD3" "WORD0REP4""WORD0REP4" "WORD4)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0REP4" "WORD1" "WORD2" "WORD0REP4" "WORD3" "WORD0REP4""WORD0REP4" "WORD4);
 
     buf_free(&b);
 
@@ -640,10 +640,10 @@ static void test_replace_all(void)
         int r; \
  \
         buf_init_ro(&b, _in, sizeof(_in)-1); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_in)-1); \
-        CU_ASSERT_EQUAL(buf_len(&b), b.len); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _in); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_in)-1); \
+        CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b)); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _in); \
  \
         r = regcomp(&re, _reg, REG_EXTENDED); \
         CU_ASSERT_EQUAL(r, 0);
@@ -651,11 +651,11 @@ static void test_replace_all(void)
         n = buf_replace_one_re(&b, &re, _rep);
 #define TESTCASE_END \
         CU_ASSERT_EQUAL(n, _expn); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT_EQUAL(buf_len(&b), b.len); \
-        CU_ASSERT(b.alloc >= b.len); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b)); \
+        CU_ASSERT(buf_alloced(&b) >= buf_len(&b)); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
         regfree(&re); \
         buf_free(&b); \
     }
@@ -679,7 +679,7 @@ static void test_replace_one_re(void)
 #define WORD3       "keffiyeh"
 #define WORD4       "biodiesel"
 #define WORD4_RE    "[a-z]iod[a-z]+"
-    const char *buf_s;
+    const char *bufstr;
 
     /* simple test: a single replacement */
     TESTCASE(WORD0" "WORD1,
@@ -698,18 +698,18 @@ static void test_replace_one_re(void)
     TESTCASE_START(WORD0" "WORD1,
                    WORD0_RE, WORD0REP2,
                    1, WORD0REP2" "WORD1);
-    buf_s = buf_cstring(&b);
+    bufstr = buf_cstring(&b);
     TESTCASE_MIDDLE
-    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), buf_s);  /* no size change => no realloc */
+    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), bufstr);  /* no size change => no realloc */
     TESTCASE_END
 
     /* a replacement which shrinks the size */
     TESTCASE_START(WORD0" "WORD1,
                    WORD0_RE, WORD0REP3,
                    1, WORD0REP3" "WORD1);
-    buf_s = buf_cstring(&b);
+    bufstr = buf_cstring(&b);
     TESTCASE_MIDDLE
-    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), buf_s);  /* no size change => no realloc */
+    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), bufstr);  /* no size change => no realloc */
     TESTCASE_END
 
     /* a replacement with an empty string */
@@ -761,7 +761,7 @@ static void test_replace_all_re(void)
 #define WORD3       "keffiyeh"
 #define WORD4       "biodiesel"
 #define WORD4_RE    "[a-z]iod[a-z]+"
-    const char *buf_s;
+    const char *bufstr;
 
     /* simple test: a single replacement */
     TESTCASE(WORD0" "WORD1,
@@ -780,18 +780,18 @@ static void test_replace_all_re(void)
     TESTCASE_START(WORD0" "WORD1,
                    WORD0_RE, WORD0REP2,
                    1, WORD0REP2" "WORD1);
-    buf_s = buf_cstring(&b);
+    bufstr = buf_cstring(&b);
     TESTCASE_MIDDLE
-    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), buf_s);  /* no size change => no realloc */
+    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), bufstr);  /* no size change => no realloc */
     TESTCASE_END
 
     /* a replacement which shrinks the size */
     TESTCASE_START(WORD0" "WORD1,
                    WORD0_RE, WORD0REP3,
                    1, WORD0REP3" "WORD1);
-    buf_s = buf_cstring(&b);
+    bufstr = buf_cstring(&b);
     TESTCASE_MIDDLE
-    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), buf_s);  /* no size change => no realloc */
+    CU_ASSERT_PTR_EQUAL(buf_cstring(&b), bufstr);  /* no size change => no realloc */
     TESTCASE_END
 
     /* a replacement with an empty string */
@@ -842,16 +842,16 @@ static void test_replace_all_re(void)
  \
         buf_appendcstr(&b, _in); \
         buf_cstring(&b); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_in)-1); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _in); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_in)-1); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _in); \
  \
         buf_insertcstr(&b, _off, _rep); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT(b.alloc >= b.len); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT(buf_alloced(&b) >= buf_len(&b)); \
         buf_cstring(&b); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
         buf_free(&b); \
     }
 
@@ -899,16 +899,16 @@ static void test_insertcstr(void)
  \
         buf_appendcstr(&b, _in); \
         buf_cstring(&b); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_in)-1); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _in); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_in)-1); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _in); \
  \
         buf_insertmap(&b, _off, _rep, sizeof(_rep)-1); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT(b.alloc >= b.len); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT(buf_alloced(&b) >= buf_len(&b)); \
         buf_cstring(&b); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
         buf_free(&b); \
     }
 
@@ -959,16 +959,16 @@ static void test_insertmap(void)
  \
         buf_appendcstr(&b, _in); \
         buf_cstring(&b); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_in)-1); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _in); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_in)-1); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _in); \
  \
         buf_insert(&b, _off, &_repb); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT(b.alloc >= b.len); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT(buf_alloced(&b) >= buf_len(&b)); \
         buf_cstring(&b); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
         buf_free(&b); \
         buf_free(&_repb); \
     }
@@ -1017,16 +1017,16 @@ static void test_insert(void)
  \
         buf_appendcstr(&b, _in); \
         buf_cstring(&b); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_in)-1); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _in); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_in)-1); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _in); \
  \
         buf_remove(&b, _off, _len); \
-        CU_ASSERT_EQUAL(b.len, sizeof(_exp)-1); \
-        CU_ASSERT(b.alloc >= b.len); \
+        CU_ASSERT_EQUAL(buf_len(&b), sizeof(_exp)-1); \
+        CU_ASSERT(buf_alloced(&b) >= buf_len(&b)); \
         buf_cstring(&b); \
-        CU_ASSERT_PTR_NOT_NULL(b.s); \
-        CU_ASSERT_STRING_EQUAL(b.s, _exp); \
+        CU_ASSERT_PTR_NOT_NULL(buf_s(&b)); \
+        CU_ASSERT_STRING_EQUAL(buf_s(&b), _exp); \
         buf_free(&b); \
     }
 
@@ -1079,48 +1079,48 @@ static void test_truncate(void)
     struct buf b = BUF_INITIALIZER;
     unsigned int i;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     /* buf_truncate() which shortens the buffer */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     buf_truncate(&b, sizeof(WORD0)-1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0);
 
     /* buf_truncate() which extends and zero-fills the buffer */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
 
     buf_truncate(&b, sizeof(WORD0" "WORD1)-1+2048);
     buf_cstring(&b);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0" "WORD1)-1+2048);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_STRING_EQUAL(b.s, WORD0" "WORD1);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0" "WORD1)-1+2048);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), WORD0" "WORD1);
     for (i=sizeof(WORD0" "WORD1)-1; i<sizeof(WORD0" "WORD1)-1+2048 ; i++)
-        if (b.s[i] != 0)
+        if (buf_s(&b)[i] != 0)
             break;
     CU_ASSERT_EQUAL(i, sizeof(WORD0" "WORD1)-1+2048);
 
@@ -1141,10 +1141,10 @@ static void test_cmp(void)
     int d;
 
     /* compare two empty (null) bufs */
-    CU_ASSERT_PTR_NULL(a.s);
-    CU_ASSERT_EQUAL(a.len, 0);
-    CU_ASSERT_PTR_NULL(b.s);
-    CU_ASSERT_EQUAL(b.len, 0);
+    CU_ASSERT_EQUAL(0, buf_len(&a));
+    CU_ASSERT_EQUAL(buf_len(&a), 0);
+    CU_ASSERT_EQUAL(0, buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
     d = buf_cmp(&a, &b);
     CU_ASSERT_EQUAL(d, 0);
     d = buf_cmp(&b, &a);
@@ -1153,10 +1153,10 @@ static void test_cmp(void)
     /* compare empty (null) vs empty (zero-length) */
     buf_appendcstr(&b, "foo");
     buf_truncate(&b, 0);
-    CU_ASSERT_PTR_NULL(a.s);
-    CU_ASSERT_EQUAL(a.len, 0);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_EQUAL(b.len, 0);
+    CU_ASSERT_EQUAL(0, buf_len(&a));
+    CU_ASSERT_EQUAL(buf_len(&a), 0);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
     d = buf_cmp(&a, &b);
     CU_ASSERT_EQUAL(d, 0);
     d = buf_cmp(&b, &a);
@@ -1167,10 +1167,10 @@ static void test_cmp(void)
     buf_appendcstr(&a, WORD0);
     buf_reset(&b);
     buf_appendcstr(&b, WORD0);
-    CU_ASSERT_PTR_NOT_NULL(a.s);
-    CU_ASSERT_EQUAL(a.len, sizeof(WORD0)-1);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&a));
+    CU_ASSERT_EQUAL(buf_len(&a), sizeof(WORD0)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
     d = buf_cmp(&a, &b);
     CU_ASSERT_EQUAL(d, 0);
     d = buf_cmp(&b, &a);
@@ -1181,10 +1181,10 @@ static void test_cmp(void)
     buf_appendcstr(&a, WORD0);
     buf_reset(&b);
     buf_appendcstr(&b, WORD1);
-    CU_ASSERT_PTR_NOT_NULL(a.s);
-    CU_ASSERT_EQUAL(a.len, sizeof(WORD0)-1);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD1)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&a));
+    CU_ASSERT_EQUAL(buf_len(&a), sizeof(WORD0)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD1)-1);
     d = buf_cmp(&a, &b);
     CU_ASSERT(d < 0);
     d = buf_cmp(&b, &a);
@@ -1196,10 +1196,10 @@ static void test_cmp(void)
     buf_appendcstr(&a, WORD0SUB);
     buf_reset(&b);
     buf_appendcstr(&b, WORD0);
-    CU_ASSERT_PTR_NOT_NULL(a.s);
-    CU_ASSERT_EQUAL(a.len, sizeof(WORD0SUB)-1);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&a));
+    CU_ASSERT_EQUAL(buf_len(&a), sizeof(WORD0SUB)-1);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
     d = buf_cmp(&a, &b);
     CU_ASSERT(d < 0);
     d = buf_cmp(&b, &a);
@@ -1217,22 +1217,22 @@ static void test_cow(void)
     static const char DATA0[] = "LoRem";
     struct buf b = BUF_INITIALIZER;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_init_ro(&b, DATA0, sizeof(DATA0)-1);
-    CU_ASSERT_EQUAL(b.len, sizeof(DATA0)-1);
-    CU_ASSERT_EQUAL(b.alloc, 0);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_EQUAL(b.s, (char *)DATA0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(DATA0)-1);
+    CU_ASSERT_EQUAL(buf_alloced(&b), 0);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), (char *)DATA0);
 
     buf_putc(&b, 'X');
-    CU_ASSERT_EQUAL(b.len, sizeof(DATA0)-1+1);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NOT_EQUAL(b.s, (char *)DATA0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(DATA0)-1+1);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_PTR_NOT_EQUAL(buf_s(&b), (char *)DATA0);
 
     buf_free(&b);
 }
@@ -1242,22 +1242,22 @@ static void test_cow2(void)
     static const char DATA0[] = "cardigan umami";
     struct buf b = BUF_INITIALIZER;
 
-    CU_ASSERT_EQUAL(b.len, 0);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NULL(b.s);
+    CU_ASSERT_EQUAL(buf_len(&b), 0);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_EQUAL(0, buf_len(&b));
 
     buf_init_ro_cstr(&b, DATA0);
-    CU_ASSERT_EQUAL(b.len, sizeof(DATA0)-1);
-    CU_ASSERT_EQUAL(b.alloc, 0);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_EQUAL(b.s, (char *)DATA0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(DATA0)-1);
+    CU_ASSERT_EQUAL(buf_alloced(&b), 0);
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), (char *)DATA0);
 
     buf_putc(&b, 'X');
-    CU_ASSERT_EQUAL(b.len, sizeof(DATA0)-1+1);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_EQUAL(buf_len(&b), b.len);
-    CU_ASSERT_PTR_NOT_EQUAL(b.s, (char *)DATA0);
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(DATA0)-1+1);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_EQUAL(buf_len(&b), buf_len(&b));
+    CU_ASSERT_PTR_NOT_EQUAL(buf_s(&b), (char *)DATA0);
 
     buf_free(&b);
 }
@@ -1318,16 +1318,16 @@ static void test_cowappendmap(void)
     struct buf b = BUF_INITIALIZER;
 
     buf_cowappendmap(&b, WORD0, sizeof(WORD0)-1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
-    CU_ASSERT(b.alloc == 0);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, WORD0, sizeof(WORD0)-1));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
+    CU_ASSERT(buf_alloced(&b) == 0);
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), WORD0, sizeof(WORD0)-1));
 
     buf_cowappendmap(&b, WORD1, sizeof(WORD1)-1);
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1+sizeof(WORD1)-1);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, WORD0""WORD1, sizeof(WORD0)-1+sizeof(WORD1)-1));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1+sizeof(WORD1)-1);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), WORD0""WORD1, sizeof(WORD0)-1+sizeof(WORD1)-1));
 
     buf_free(&b);
 #undef WORD0
@@ -1344,17 +1344,17 @@ static void test_cowappendfree(void)
 
     s = xstrdup(WORD0);
     buf_cowappendfree(&b, s, strlen(s));
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, WORD0, sizeof(WORD0)-1));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), WORD0, sizeof(WORD0)-1));
 
     s = xstrdup(WORD1);
     buf_cowappendfree(&b, s, strlen(s));
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)-1+sizeof(WORD1)-1);
-    CU_ASSERT(b.alloc >= b.len);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT(!memcmp(b.s, WORD0""WORD1, sizeof(WORD0)-1+sizeof(WORD1)-1));
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)-1+sizeof(WORD1)-1);
+    CU_ASSERT(buf_alloced(&b) >= buf_len(&b));
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT(!memcmp(buf_s(&b), WORD0""WORD1, sizeof(WORD0)-1+sizeof(WORD1)-1));
 
     /* we don't free s, buf_free() should do that */
     buf_free(&b);
@@ -1377,7 +1377,7 @@ static void test_bufprint(void)
     prot_flush(outstream);
     prot_free(outstream);
 
-    CU_ASSERT_EQUAL(b.len, 5000);
+    CU_ASSERT_EQUAL(buf_len(&b), 5000);
 
     buf_free(&b);
 }
@@ -1415,7 +1415,7 @@ static void test_replace_shorten(void)
      * shortens the string - this would show up in Valgrind. */
 
     buf_replace_all(&b, "skateboard", "truck");
-    CU_ASSERT_STRING_EQUAL(b.s, "dreamcatcher truck");
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), "dreamcatcher truck");
 
     buf_free(&b);
 }
@@ -1426,9 +1426,9 @@ static void test_replace_cow_cstr(void)
     static const char DATA0[] = "food truck vegan";
 
     buf_init_ro_cstr(&b, DATA0);
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_PTR_EQUAL(b.s, DATA0);
-    CU_ASSERT_STRING_EQUAL(b.s, "food truck vegan");
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_PTR_EQUAL(buf_s(&b), DATA0);
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), "food truck vegan");
 
     /* There was a bug where buf_replace_all() was enforcing that
      * the buffer was a C string but not that it was writable, which
@@ -1436,9 +1436,9 @@ static void test_replace_cow_cstr(void)
      * the bug, buf_replace_all() would SEGV */
 
     buf_replace_all(&b, "truck", "vinyl");
-    CU_ASSERT_PTR_NOT_NULL(b.s);
-    CU_ASSERT_PTR_NOT_EQUAL(b.s, DATA0);
-    CU_ASSERT_STRING_EQUAL(b.s, "food vinyl vegan");
+    CU_ASSERT_PTR_NOT_NULL(buf_s(&b));
+    CU_ASSERT_PTR_NOT_EQUAL(buf_s(&b), DATA0);
+    CU_ASSERT_STRING_EQUAL(buf_s(&b), "food vinyl vegan");
 
     buf_free(&b);
 }
@@ -1456,7 +1456,7 @@ static void test_findline(void)
 #define WORDU "banksy"
 
     buf_appendcstr(&b, WORD0"\n"WORD1"\n"WORD2"\n"WORD3" "WORD4"\n"WORD5"\n");
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
                            sizeof(WORD3)+sizeof(WORD4)+sizeof(WORD5));
 
     /* a zero length line is always unfound */
@@ -1509,7 +1509,7 @@ static void test_findline(void)
      * matches a later present line, is found */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0"\n"WORD1" "WORD2"\n"WORD1"\n"WORD2"\n"WORD5"\n");
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
                            sizeof(WORD1)+sizeof(WORD2)+sizeof(WORD5));
     r = buf_findline(&b, WORD1);
     CU_ASSERT_EQUAL(r, sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2));
@@ -1525,7 +1525,7 @@ static void test_findline(void)
     /* a word which is the first subset of the first line, is unfound */
     buf_reset(&b);
     buf_appendcstr(&b, WORD0" "WORD1"\n"WORD2" "WORD3"\n");
-    CU_ASSERT_EQUAL(b.len, sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
+    CU_ASSERT_EQUAL(buf_len(&b), sizeof(WORD0)+sizeof(WORD1)+sizeof(WORD2)+
                            sizeof(WORD3));
     r = buf_findline(&b, WORD0);
     CU_ASSERT_EQUAL(r, -1);

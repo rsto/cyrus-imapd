@@ -393,7 +393,7 @@ static std::string detect_language(const struct buf *part)
 {
     std::string iso_lang;
     bool reliable = false;
-    CLD2::Language lang = CLD2::DetectLanguage(part->s, part->len, 1, &reliable);
+    CLD2::Language lang = CLD2::DetectLanguage(buf_s(part), buf_len(part), 1, &reliable);
 
     if (reliable && lang != CLD2::UNKNOWN_LANGUAGE) {
         std::string code(CLD2::LanguageCode(lang));
@@ -1137,7 +1137,7 @@ static int add_text_part(xapian_dbw_t *dbw, const struct buf *part, int partnum)
                         try {
                             dbw->term_generator->set_stemmer(get_stemmer(iso_lang));
                             dbw->term_generator->set_stopper(get_stopper(iso_lang));
-                            dbw->term_generator->index_text(Xapian::Utf8Iterator(part->s, part->len),
+                            dbw->term_generator->index_text(Xapian::Utf8Iterator(buf_s(part), buf_len(part)),
                                     1, lang_prefix(iso_lang, prefix));
                         } catch (const Xapian::InvalidArgumentError &err) {
                             syslog(LOG_DEBUG, "Xapian: no stemmer for language %s",
@@ -1175,7 +1175,7 @@ static int add_text_part(xapian_dbw_t *dbw, const struct buf *part, int partnum)
         dbw->term_generator->set_stemmer(Xapian::Stem());
         dbw->term_generator->set_stopper(NULL);
     }
-    dbw->term_generator->index_text(Xapian::Utf8Iterator(part->s, part->len), 1, prefix);
+    dbw->term_generator->index_text(Xapian::Utf8Iterator(buf_s(part), buf_len(part)), 1, prefix);
 
     return r;
 }

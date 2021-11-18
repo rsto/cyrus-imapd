@@ -662,12 +662,12 @@ EXPORTED int sync_log_reader_getitem(sync_log_reader_t *slr,
         }
 
         if ((c = getastring(slr->input, 0, &slr->arg1)) == EOF) return EOF;
-        arg1s = slr->arg1.s;
+        arg1s = buf_s(&slr->arg1);
 
         arg2s = NULL;
         if (c == ' ') {
             if ((c = getastring(slr->input, 0, &slr->arg2)) == EOF) return EOF;
-            arg2s = slr->arg2.s;
+            arg2s = buf_s(&slr->arg2);
         }
 
         if (c == '\r') c = prot_getc(slr->input);
@@ -680,8 +680,8 @@ EXPORTED int sync_log_reader_getitem(sync_log_reader_t *slr,
         break;
     }
 
-    ucase(slr->type.s);
-    args[0] = slr->type.s;
+    buf_ucase(&slr->type);
+    args[0] = buf_s(&slr->type);
     args[1] = arg1s;
     args[2] = arg2s;
     return 0;

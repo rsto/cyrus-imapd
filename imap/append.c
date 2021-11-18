@@ -391,13 +391,13 @@ static int callout_send_args(int fd, const struct buf *args)
     char lenbuf[32];
     int r = 0;
 
-    snprintf(lenbuf, sizeof(lenbuf), "%u\n", (unsigned)args->len);
+    snprintf(lenbuf, sizeof(lenbuf), "%u\n", (unsigned)buf_len(args));
     r = retry_write(fd, lenbuf, strlen(lenbuf));
     if (r < 0)
         goto out;
 
-    if (args->len) {
-        r = retry_write(fd, args->s, args->len);
+    if (buf_len(args)) {
+        r = retry_write(fd, buf_s(args), buf_len(args));
         if (r < 0)
             goto out;
         r = retry_write(fd, "0\n", 2);
@@ -611,7 +611,7 @@ static void callout_encode_args(struct buf *args,
         for (av = ee->attvalues ; av ; av = av->next) {
             message_write_nstring(args, av->attrib);
             buf_putc(args, ' ');
-            message_write_nstring_map(args, av->value.s, av->value.len);
+            message_write_nstring_map(args, buf_s(&av->value), buf_len(&av->value));
             if (av->next)
                 buf_putc(args, ' ');
         }

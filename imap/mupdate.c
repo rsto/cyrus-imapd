@@ -668,22 +668,22 @@ static mupdate_docmd_result_t docmd(struct conn *c)
     ch = getword(c->pin, &(c->cmd));
     if (ch == EOF) {
         goto lost_conn;
-    } else if (!c->cmd.s[0]) {
-        prot_printf(c->pout, "%s BAD \"Null command\"\r\n", c->tag.s);
+    } else if (!buf_s(&c->cmd)[0]) {
+        prot_printf(c->pout, "%s BAD \"Null command\"\r\n", buf_s(&c->tag));
         eatline(c->pin, ch);
         goto nextcmd;
     }
 
-    if (Uislower(c->cmd.s[0])) {
-        c->cmd.s[0] = toupper((unsigned char) c->cmd.s[0]);
+    if (Uislower(buf_s(&c->cmd)[0])) {
+        buf_s(&c->cmd)[0] = toupper((unsigned char) buf_s(&c->cmd)[0]);
     }
-    for (p = &(c->cmd.s[1]); *p; p++) {
+    for (p = &(buf_s(&c->cmd)[1]); *p; p++) {
         if (Uisupper(*p)) *p = tolower((unsigned char) *p);
     }
 
-    switch (c->cmd.s[0]) {
+    switch (buf_s(&c->cmd)[0]) {
     case 'A':
-        if (!strcmp(c->cmd.s, "Authenticate")) {
+        if (!strcmp(buf_s(&c->cmd), "Authenticate")) {
             int opt = 0;
 
             if (ch != ' ') goto missingargs;
@@ -697,15 +697,15 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->userid) {
                 prot_printf(c->pout,
                             "%s BAD \"already authenticated\"\r\n",
-                            c->tag.s);
+                            buf_s(&c->tag));
                 goto nextcmd;
             }
 
-            cmd_authenticate(c, c->tag.s, c->arg1.s,
-                             opt ? c->arg2.s : NULL);
+            cmd_authenticate(c, buf_s(&c->tag), buf_s(&c->arg1),
+                             opt ? buf_s(&c->arg2) : NULL);
         }
         else if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Activate")) {
+        else if (!strcmp(buf_s(&c->cmd), "Activate")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             if (ch != ' ') goto missingargs;
@@ -717,20 +717,20 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->streaming) goto notwhenstreaming;
             if (!masterp) goto masteronly;
 
-            cmd_set(c, c->tag.s, c->arg1.s, c->arg2.s,
-                    c->arg3.s, SET_ACTIVE);
+            cmd_set(c, buf_s(&c->tag), buf_s(&c->arg1), buf_s(&c->arg2),
+                    buf_s(&c->arg3), SET_ACTIVE);
         }
         else goto badcmd;
         break;
 
 #ifdef HAVE_ZLIB
     case 'C':
-        if (!strcmp(c->cmd.s, "Compress")) {
+        if (!strcmp(buf_s(&c->cmd), "Compress")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             CHECKNEWLINE(c, ch);
 
-            cmd_compress(c, c->tag.s, c->arg1.s);
+            cmd_compress(c, buf_s(&c->tag), buf_s(&c->arg1));
         }
         else goto badcmd;
         break;
@@ -738,7 +738,7 @@ static mupdate_docmd_result_t docmd(struct conn *c)
 
     case 'D':
         if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Deactivate")) {
+        else if (!strcmp(buf_s(&c->cmd), "Deactivate")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             if (ch != ' ') goto missingargs;
@@ -748,10 +748,10 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->streaming) goto notwhenstreaming;
             if (!masterp) goto masteronly;
 
-            cmd_set(c, c->tag.s, c->arg1.s, c->arg2.s,
+            cmd_set(c, buf_s(&c->tag), buf_s(&c->arg1), buf_s(&c->arg2),
                     NULL, SET_DEACTIVATE);
         }
-        else if (!strcmp(c->cmd.s, "Delete")) {
+        else if (!strcmp(buf_s(&c->cmd), "Delete")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             CHECKNEWLINE(c, ch);
@@ -759,35 +759,35 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->streaming) goto notwhenstreaming;
             if (!masterp) goto masteronly;
 
-            cmd_set(c, c->tag.s, c->arg1.s, NULL, NULL, SET_DELETE);
+            cmd_set(c, buf_s(&c->tag), buf_s(&c->arg1), NULL, NULL, SET_DELETE);
         }
         else goto badcmd;
         break;
 
     case 'F':
         if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Find")) {
+        else if (!strcmp(buf_s(&c->cmd), "Find")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             CHECKNEWLINE(c, ch);
 
             if (c->streaming) goto notwhenstreaming;
 
-            cmd_find(c, c->tag.s, c->arg1.s, 1, 0);
+            cmd_find(c, buf_s(&c->tag), buf_s(&c->arg1), 1, 0);
         }
         else goto badcmd;
         break;
 
     case 'L':
-        if (!strcmp(c->cmd.s, "Logout")) {
+        if (!strcmp(buf_s(&c->cmd), "Logout")) {
             CHECKNEWLINE(c, ch);
 
-            prot_printf(c->pout, "%s OK \"bye-bye\"\r\n", c->tag.s);
+            prot_printf(c->pout, "%s OK \"bye-bye\"\r\n", buf_s(&c->tag));
             ret = DOCMD_CONN_FINISHED;
             goto done;
         }
         else if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "List")) {
+        else if (!strcmp(buf_s(&c->cmd), "List")) {
             int opt = 0;
 
             if (ch == ' ') {
@@ -799,16 +799,16 @@ static mupdate_docmd_result_t docmd(struct conn *c)
 
             if (c->streaming) goto notwhenstreaming;
 
-            cmd_list(c, c->tag.s, opt ? c->arg1.s : NULL);
+            cmd_list(c, buf_s(&c->tag), opt ? buf_s(&c->arg1) : NULL);
 
-            prot_printf(c->pout, "%s OK \"list complete\"\r\n", c->tag.s);
+            prot_printf(c->pout, "%s OK \"list complete\"\r\n", buf_s(&c->tag));
         }
         else goto badcmd;
         break;
 
     case 'N':
         if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Noop")) {
+        else if (!strcmp(buf_s(&c->cmd), "Noop")) {
             CHECKNEWLINE(c, ch);
 
             if (c->streaming) {
@@ -817,14 +817,14 @@ static mupdate_docmd_result_t docmd(struct conn *c)
                 sendupdates(c, 0); /* don't flush pout though */
             }
 
-            prot_printf(c->pout, "%s OK \"Noop done\"\r\n", c->tag.s);
+            prot_printf(c->pout, "%s OK \"Noop done\"\r\n", buf_s(&c->tag));
         }
         else goto badcmd;
         break;
 
     case 'R':
         if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Reserve")) {
+        else if (!strcmp(buf_s(&c->cmd), "Reserve")) {
             if (ch != ' ') goto missingargs;
             ch = getstring(c->pin, c->pout, &(c->arg1));
             if (ch != ' ') goto missingargs;
@@ -834,13 +834,13 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->streaming) goto notwhenstreaming;
             if (!masterp) goto masteronly;
 
-            cmd_set(c, c->tag.s, c->arg1.s, c->arg2.s, NULL, SET_RESERVE);
+            cmd_set(c, buf_s(&c->tag), buf_s(&c->arg1), buf_s(&c->arg2), NULL, SET_RESERVE);
         }
         else goto badcmd;
         break;
 
     case 'S':
-        if (!strcmp(c->cmd.s, "Starttls")) {
+        if (!strcmp(buf_s(&c->cmd), "Starttls")) {
             CHECKNEWLINE(c, ch);
 
             /* XXX  discard any input pipelined after STARTTLS */
@@ -855,7 +855,7 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->userid) {
                 prot_printf(c->pout,
                             "%s BAD Can't Starttls after authentication\r\n",
-                            c->tag.s);
+                            buf_s(&c->tag));
                 goto nextcmd;
             }
 
@@ -863,7 +863,7 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->compress_done) {
                 prot_printf(c->pout,
                             "%s BAD Can't Starttls after Compress\r\n",
-                            c->tag.s);
+                            buf_s(&c->tag));
                 goto nextcmd;
             }
 
@@ -871,24 +871,24 @@ static mupdate_docmd_result_t docmd(struct conn *c)
             if (c->tlsconn) {
                 prot_printf(c->pout,
                             "%s BAD Already did a successful Starttls\r\n",
-                            c->tag.s);
+                            buf_s(&c->tag));
                 goto nextcmd;
             }
-            cmd_starttls(c, c->tag.s);
+            cmd_starttls(c, buf_s(&c->tag));
         }
         else goto badcmd;
         break;
 
     case 'U':
         if (!c->userid) goto nologin;
-        else if (!strcmp(c->cmd.s, "Update")) {
+        else if (!strcmp(buf_s(&c->cmd), "Update")) {
             strarray_t *arg = NULL;
             int counter = 30; /* limit on number of processed hosts */
 
             while(ch == ' ') {
                 /* Hey, look, more bits of a PARTIAL-UPDATE command */
                 ch = getstring(c->pin, c->pout, &(c->arg1));
-                if (c->arg1.s[0] == '\0') {
+                if (buf_s(&c->arg1)[0] == '\0') {
                     strarray_free(arg);
                     goto badargs;
                 }
@@ -897,13 +897,13 @@ static mupdate_docmd_result_t docmd(struct conn *c)
                     goto extraargs;
                 }
                 if (!arg) arg = strarray_new();
-                strarray_append(arg, c->arg1.s);
+                strarray_append(arg, buf_s(&c->arg1));
             }
 
             CHECKNEWLINE(c, ch);
             if (c->streaming) goto notwhenstreaming;
 
-            cmd_startupdate(c, c->tag.s, arg);
+            cmd_startupdate(c, buf_s(&c->tag), arg);
         }
         else goto badcmd;
         break;
@@ -911,41 +911,41 @@ static mupdate_docmd_result_t docmd(struct conn *c)
     default:
     badcmd:
         prot_printf(c->pout, "%s BAD \"Unrecognized command\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         eatline(c->pin, ch);
         break;
 
     extraargs:
         prot_printf(c->pout, "%s BAD \"Extra arguments\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         eatline(c->pin, ch);
         break;
 
     badargs:
         prot_printf(c->pout, "%s BAD \"Badly formed arguments\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         eatline(c->pin, ch);
         break;
 
     missingargs:
         prot_printf(c->pout, "%s BAD \"Missing arguments\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         eatline(c->pin, ch);
         break;
 
     notwhenstreaming:
         prot_printf(c->pout, "%s BAD \"not legal when streaming\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         break;
 
     masteronly:
         prot_printf(c->pout,
                     "%s BAD \"read-only session\"\r\n",
-                    c->tag.s);
+                    buf_s(&c->tag));
         break;
 
     nologin:
-        prot_printf(c->pout, "%s BAD \"Please login first\"\r\n", c->tag.s);
+        prot_printf(c->pout, "%s BAD \"Please login first\"\r\n", buf_s(&c->tag));
         eatline(c->pin, ch);
         break;
     }

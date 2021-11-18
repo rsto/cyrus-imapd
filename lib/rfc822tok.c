@@ -57,7 +57,7 @@ EXPORTED void rfc822tok_init(rfc822tok_t *t, const char *base,
 EXPORTED void rfc822tok_init_buf(rfc822tok_t *t, const struct buf *b,
                                  unsigned int flags)
 {
-    rfc822tok_init(t, (b ? b->s : NULL), (b ? b->len : 0), flags);
+    rfc822tok_init(t, (b ? buf_s(b) : NULL), (b ? buf_len(b) : 0), flags);
 }
 
 EXPORTED void rfc822tok_fini(rfc822tok_t *t)
@@ -89,10 +89,10 @@ EXPORTED int rfc822tok_next(rfc822tok_t *t, char **textp)
 
     buf_reset(&text);
     if (textp) *textp = NULL;
-    if (!t->buf.len)
+    if (!buf_len(&t->buf))
         return EOF;
 
-    end = t->buf.s + t->buf.len;
+    end = buf_s(&t->buf) + buf_len(&t->buf);
     p = t->ptr;
     if (p >= end)
         return EOF;
@@ -182,7 +182,7 @@ EXPORTED int rfc822tok_next(rfc822tok_t *t, char **textp)
 
 out:
     t->ptr = p;
-    if (textp) *textp = text.len ? (char *)buf_cstring(&text) : NULL;
+    if (textp) *textp = buf_len(&text) ? (char *)buf_cstring(&text) : NULL;
     return r;
 }
 

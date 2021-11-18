@@ -3289,7 +3289,7 @@ void get_schedule_addresses(hdrcache_t req_hdrs, const char *mboxname,
             DAV_ANNOT_NS "<" XML_NS_CALDAV ">calendar-user-address-set";
         int r = annotatemore_lookupmask(mboxname, annotname,
                                         userid, &buf);
-        if (r || !buf.len) {
+        if (r || !buf_len(&buf)) {
             /* check calendar-user-address-set for target user's principal */
             char *calhomeset = caldav_mboxname(userid, NULL);
             buf_reset(&buf);
@@ -3298,7 +3298,7 @@ void get_schedule_addresses(hdrcache_t req_hdrs, const char *mboxname,
             free(calhomeset);
         }
 
-        if (!r && buf.len) {
+        if (!r && buf_len(&buf)) {
             strarray_t *values =
                 strarray_split(buf_cstring(&buf), ",", STRARRAY_TRIM);
             int i;

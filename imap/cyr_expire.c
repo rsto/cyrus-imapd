@@ -306,11 +306,11 @@ static int get_annotation_value(const mbentry_t *mbentry,
         buf_free(&attrib);
         ret = annotatemore_lookup_mbe(mbentry, annot_entry, "", &attrib);
         if (ret ||              /* error */
-            attrib.s)           /* found an entry */
+            buf_s(&attrib))           /* found an entry */
             break;
     } while (mboxname_make_parent(buf) && iterate);
 
-    if (attrib.s && parse_duration(attrib.s, secondsp))
+    if (buf_s(&attrib) && parse_duration(buf_s(&attrib), secondsp))
         ret = 1;
     else
         ret = 0;

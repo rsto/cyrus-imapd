@@ -659,7 +659,7 @@ EXPORTED icalcomponent *record_to_ical(struct mailbox *mailbox,
         buf_reset(&buf);
         if (!message_get_field(m, "x-schedule-user-address",
                                MESSAGE_DECODED|MESSAGE_TRIM, &buf)) {
-            if (buf.len) {
+            if (buf_len(&buf)) {
                 strarray_t *vals = strarray_split(buf_cstring(&buf), ",", STRARRAY_TRIM);
                 int i;
                 for (i = 0; i < strarray_size(vals); i++) {

@@ -892,7 +892,7 @@ static int _parseitem(struct dlistsax_state *s, struct buf *buf)
 
 static int _parseqstring(struct dlistsax_state *s, struct buf *buf)
 {
-    buf->len = 0;
+    buf_reset(buf);
 
     /* get over the first quote */
     if (*s->p++ != '"') return IMAP_INVALID_IDENTIFIER;
@@ -970,7 +970,7 @@ static int _parseitem(struct dlistsax_state *s, struct buf *buf)
         while (sp[-1] == ')' && sp > s->p) sp--;
         buf_appendmap(buf, s->p, sp - s->p);
         s->p = sp;
-        if (buf->len == 3 && buf->s[0] == 'N' && buf->s[1] == 'I' && buf->s[2] == 'L')
+        if (buf_len(buf) == 3 && buf_s(buf)[0] == 'N' && buf_s(buf)[1] == 'I' && buf_s(buf)[2] == 'L')
             return IMAP_ZERO_LENGTH_LITERAL; // this is kinda bogus, but...
         return 0; /* this could be the last thing, so end is OK */
     }
@@ -992,7 +992,7 @@ static int _parsesax(struct dlistsax_state *s, int parsekey)
         else return IMAP_INVALID_IDENTIFIER;
     }
     else {
-        backdoor->len = 0;
+        buf_reset(backdoor);
     }
 
     if (s->p >= s->end) return IMAP_INVALID_IDENTIFIER;
@@ -1118,7 +1118,7 @@ EXPORTED int dlist_parse(struct dlist **dlp, int parsekey, int isbackup,
 
     /* check what sort of value we have */
     if (c == '(') {
-        dl = dlist_newlist(NULL, kbuf.s);
+        dl = dlist_newlist(NULL, buf_s(&kbuf));
         c = next_nonspace(in, ' ');
         while (c != ')') {
             struct dlist *di = NULL;
@@ -1134,7 +1134,7 @@ EXPORTED int dlist_parse(struct dlist **dlp, int parsekey, int isbackup,
         /* no whitespace allowed here */
         c = prot_getc(in);
         if (c == '(') {
-            dl = dlist_newkvlist(NULL, kbuf.s);
+            dl = dlist_newkvlist(NULL, buf_s(&kbuf));
             c = next_nonspace(in, ' ');
             while (c != ')') {
                 struct dlist *di = NULL;
@@ -1159,9 +1159,9 @@ EXPORTED int dlist_parse(struct dlist **dlp, int parsekey, int isbackup,
             c = prot_getc(in);
             if (c == '\r') c = prot_getc(in);
             if (c != '\n') goto fail;
-            if (!message_guid_decode(&tmp_guid, gbuf.s)) goto fail;
-            if (reservefile(in, pbuf.s, &tmp_guid, size, isbackup, &fname)) goto fail;
-            dl = dlist_setfile(NULL, kbuf.s, pbuf.s, &tmp_guid, size, fname);
+            if (!message_guid_decode(&tmp_guid, buf_s(&gbuf))) goto fail;
+            if (reservefile(in, buf_s(&pbuf), &tmp_guid, size, isbackup, &fname)) goto fail;
+            dl = dlist_setfile(NULL, buf_s(&kbuf), buf_s(&pbuf), &tmp_guid, size, fname);
             /* file literal */
         }
         else {
@@ -1174,17 +1174,17 @@ EXPORTED int dlist_parse(struct dlist **dlp, int parsekey, int isbackup,
         prot_ungetc(c, in);
         /* could be binary in a literal */
         c = getbastring(in, NULL, &vbuf);
-        dl = dlist_setmap(NULL, kbuf.s, vbuf.s, vbuf.len);
+        dl = dlist_setmap(NULL, buf_s(&kbuf), buf_s(&vbuf), buf_len(&vbuf));
     }
     else if (c == '\\') { /* special case for flags */
         prot_ungetc(c, in);
         c = getastring(in, NULL, &vbuf);
-        dl = dlist_setflag(NULL, kbuf.s, vbuf.s);
+        dl = dlist_setflag(NULL, buf_s(&kbuf), buf_s(&vbuf));
     }
     else {
         prot_ungetc(c, in);
         c = getnastring(in, NULL, &vbuf);
-        dl = dlist_setatom(NULL, kbuf.s, vbuf.s);
+        dl = dlist_setatom(NULL, buf_s(&kbuf), buf_s(&vbuf));
     }
 
     /* success */
