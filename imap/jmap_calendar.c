@@ -3101,16 +3101,17 @@ static icaltimezone *calendarevent_get_floatingtz(const mbentry_t *mbentry,
 }
 
 
-static void context_begin_cdata(struct jmapical_ctx *jmapctx,
-                                mbentry_t *mbentry,
-                                struct caldav_data *cdata)
+static void context_begin_msg(struct jmapical_ctx *jmapctx,
+                              const char *mboxid,
+                              uint32_t imap_uid,
+                              const char *partid)
 {
-    jmapctx->icalsrc.mboxid = mbentry->uniqueid;
-    jmapctx->icalsrc.uid = cdata->dav.imap_uid;
-    jmapctx->icalsrc.partid = NULL;
+    jmapctx->icalsrc.mboxid = mboxid;
+    jmapctx->icalsrc.uid = imap_uid;
+    jmapctx->icalsrc.partid = partid;
 }
 
-static void context_end_cdata(struct jmapical_ctx *jmapctx)
+static void context_end_msg(struct jmapical_ctx *jmapctx)
 {
     jmapctx->icalsrc.mboxid = NULL;
     jmapctx->icalsrc.uid = 0;
@@ -3329,9 +3330,9 @@ static int getcalendarevents_cb(void *vrock, struct caldav_jscal *jscal)
     jstzones = jstimezones_new(ical);
 
     /* Convert to JMAP */
-    context_begin_cdata(jmapctx, rock->mbentry, cdata);
+    context_begin_msg(jmapctx, rock->mbentry->uniqueid, cdata->dav.imap_uid, NULL);
     jsevent = jmapical_tojmap(ical, NULL, jmapctx);
-    context_end_cdata(jmapctx);
+    context_end_msg(jmapctx);
     if (!jsevent) {
         syslog(LOG_ERR, "jmapical_tojson: can't convert %u:%s",
                 cdata->dav.imap_uid, mailbox_name(rock->mailbox));
@@ -5202,8 +5203,9 @@ static int updateevent_apply_patch(jmap_req_t *req,
 
     // Read old event
     struct jmapical_ctx *jmapctx = jmapical_context_new(req);
-    context_begin_cdata(jmapctx, mbentry, cdata);
+    context_begin_msg(jmapctx, mbentry->uniqueid, cdata->dav.imap_uid, NULL);
     old_event = jmapical_tojmap(myoldical, NULL, jmapctx);
+    context_end_msg(jmapctx);
     if (!old_event) {
         r = IMAP_INTERNAL;
         goto done;
@@ -5758,7 +5760,7 @@ static int setcalendarevents_destroy(jmap_req_t *req,
         icalcomponent *myical = prune_vevent_instances(oldical,
                 eid->ical_recurid, 1);
         struct jmapical_ctx *jmapctx = jmapical_context_new(req);
-        context_begin_cdata(jmapctx, mbentry, cdata);
+        context_begin_msg(jmapctx, mbentry->uniqueid, cdata->dav.imap_uid, NULL);
         old_event = jmapical_tojmap(myical, NULL, jmapctx);
         jmapical_context_free(&jmapctx);
         newical = NULL;
@@ -5774,7 +5776,7 @@ static int setcalendarevents_destroy(jmap_req_t *req,
     }
     else {
         struct jmapical_ctx *jmapctx = jmapical_context_new(req);
-        context_begin_cdata(jmapctx, mbentry, cdata);
+        context_begin_msg(jmapctx, mbentry->uniqueid, cdata->dav.imap_uid, NULL);
         old_event = jmapical_tojmap(oldical, NULL, jmapctx);
         jmapical_context_free(&jmapctx);
         newical = NULL;
@@ -7251,7 +7253,7 @@ static void _calendarevent_copy(jmap_req_t *req,
 
     /* Patch JMAP event */
     struct jmapical_ctx *jmapctx = jmapical_context_new(req);
-    context_begin_cdata(jmapctx, mbentry, cdata);
+    context_begin_msg(jmapctx, mbentry->uniqueid, cdata->dav.imap_uid, NULL);
     json_t *src_event = jmapical_tojmap(src_ical, NULL, jmapctx);
     if (src_event) {
         dst_event = jmap_patchobject_apply(src_event, jevent, NULL);
@@ -8703,9 +8705,9 @@ static int principal_getavailability_cb(void *vrock, struct caldav_jscal *jscal)
     }
     if (rock->show_details) {
         /* Fetch all properties, we need them for recurrence overrides */
-        context_begin_cdata(rock->jmapctx, rock->mbentry, cdata);
+        context_begin_msg(rock->jmapctx, rock->mbentry->uniqueid, cdata->dav.imap_uid, NULL);
         rock->jevent = jmapical_tojmap(ical, NULL, rock->jmapctx);
-        context_end_cdata(rock->jmapctx);
+        context_end_msg(rock->jmapctx);
     }
 
     /* Build BusyPeriod objects */
@@ -10995,10 +10997,9 @@ HIDDEN json_t *jmap_calendar_events_from_msg(jmap_req_t *req,
         }
 
         /* Convert to Event */
-        jmapctx->icalsrc.mboxid = mboxid;
-        jmapctx->icalsrc.uid = uid;
-        jmapctx->icalsrc.partid = partid;
+        context_begin_msg(jmapctx, mboxid, uid, partid);
         json_t *jsevents = jmapical_tojmap_all(ical, NULL, jmapctx);
+        context_end_msg(jmapctx);
         if (json_array_size(jsevents)) {
             json_object_set_new(jsevents_by_partid, part->part_id, jsevents);
         }

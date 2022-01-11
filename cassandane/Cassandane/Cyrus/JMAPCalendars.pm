@@ -17431,4 +17431,56 @@ sub test_calendar_set_unknown_calendarright
         $res->[0][1]{notUpdated}{Default}{properties});
 }
 
+sub test_xxx
+    :min_version_3_5 :needs_component_jmap
+{
+    my ($self) = @_;
+
+    my $jmap = $self->{jmap};
+
+    my $locations = {
+        loc1 => {
+            '@type' => 'Location',
+            uid => "779c6b7a-bff0-4dcd-a85d-907c765622ee",
+            name => "name",
+            description => "description",
+            timeZone => 'Europe/Vienna',
+            locationTypes => {
+                club => JSON::true,
+                bar => JSON::true,
+            },
+            relativeTo => 'start',
+            coordinates => 'geo:48.198634,16.371648;crs=wgs84;u=40',
+            links => {
+                link1 => {
+                    '@type' => 'Link',
+                    href => 'https://local/link1.jpg',
+                    cid => 'foo@local',
+                    contentType => 'image/jpeg',
+                    size => 123,
+                    rel => 'icon',
+                    display => 'fullsize',
+                    title => 'link1title',
+                },
+            },
+        },
+    };
+
+    my $event =  {
+        calendarIds => {
+            Default => JSON::true,
+        },
+        title => "title",
+        description => "description",
+        start => "2015-11-07T09:00:00",
+        duration => "PT1H",
+        locations => $locations,
+    };
+
+    my $ret = $self->createandget_event($event);
+    $event->{id} = $ret->{id};
+    $event->{calendarIds} = $ret->{calendarIds};
+    $self->assert_normalized_event_equals($event, $ret);
+}
+
 1;

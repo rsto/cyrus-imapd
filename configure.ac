@@ -1639,6 +1639,11 @@ dnl
                 ],
                 AC_MSG_ERROR([Need libical 3.0.0 for http]))
 
+        dnl libical may not yet support RFC 9073
+        AC_CHECK_LIB(ical, icalcomponent_new_participant,
+                AC_DEFINE(HAVE_RFC9073,[],
+                        [Do we have built-in support for RFC9073?]))
+
         dnl icalproperty_new_color was overlooked, and eventually added in 3.0.5
         AC_CHECK_LIB(ical, icalproperty_new_color,
                 AC_DEFINE(HAVE_RFC7986_COLOR,[],
