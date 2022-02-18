@@ -325,7 +325,7 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
  * user overwrites them in their copy of the resource.
  */
 #define STRIP_OWNER_CAL_DATA              \
-    "CALDATA %(VPATCH {285+}\r\n"         \
+    "CALDATA %(VPATCH {324+}\r\n"         \
     "BEGIN:VPATCH\r\n"                    \
     "VERSION:1\r\n"                       \
     "DTSTAMP:19760401T005545Z\r\n"        \
@@ -337,6 +337,7 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
     "PATCH-DELETE:#X-MOZ-LASTACK\r\n"     \
     "PATCH-DELETE:#X-MOZ-SNOOZE-TIME\r\n" \
     "PATCH-DELETE:#X-APPLE-DEFAULT-ALARM\r\n" \
+    "PATCH-DELETE:#X-JMAP-USEDEFAULTALERTS\r\n" \
     "END:PATCH\r\n"                       \
     "END:VPATCH\r\n)"
 
@@ -612,6 +613,7 @@ static int validate_propupdates(icalcomponent *ical, icalcomponent *oldical,
             case ICAL_X_PROPERTY:
                 xname = icalproperty_get_x_name(prop);
                 if (strcmp(xname, "X-APPLE-DEFAULT-ALARM") &&
+                    strcmp(xname, "X-JMAP-USEDEFAULTALERTS") &&
                     (strncmp(xname, "X-MOZ-", 6) ||
                      (strcmp(xname+6, "LASTACK") &&
                       strcmp(xname+6, "SNOOZE-TIME")))) {

@@ -2172,15 +2172,28 @@ EXPORTED int icalcomponent_read_usedefaultalerts(icalcomponent *comp)
         kind = icalcomponent_isa(comp);
     }
     do {
+        int use_defaultalerts = -1;
         icalproperty *prop;
         for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
              prop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY)) {
             const char *propname = icalproperty_get_x_name(prop);
             if (!strcasecmp(propname, "X-APPLE-DEFAULT-ALARM")) {
                 const char *val = icalproperty_get_value_as_string(prop);
-                return !strcasecmpsafe(val, "TRUE");
+                if (!strcasecmpsafe(val, "TRUE"))
+                    return 1;
+            }
+
+            if (!strcasecmp(propname, "X-JMAP-USEDEFAULTALERTS")) {
+                if (use_defaultalerts < 0) {
+                    const char *val = icalproperty_get_value_as_string(prop);
+                    use_defaultalerts = !strcasecmpsafe(val, "TRUE");
+                }
             }
         }
+
+        if (use_defaultalerts >= 0)
+            return use_defaultalerts;
+
         if (ical) comp = icalcomponent_get_next_component(ical, kind);
     } while (ical && comp);
 
@@ -2198,7 +2211,8 @@ EXPORTED void icalcomponent_set_usedefaultalerts(icalcomponent *comp)
         kind = icalcomponent_isa(comp);
     }
     do {
-        int has_usedefaultalerts = 0;
+        int has_apple = 0;
+        int has_jmap = 0;
 
         icalproperty *prop, *nextprop;
         for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
@@ -2206,21 +2220,34 @@ EXPORTED void icalcomponent_set_usedefaultalerts(icalcomponent *comp)
 
             nextprop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY);
 
-            if (strcasecmp(icalproperty_get_x_name(prop), "X-APPLE-DEFAULT-ALARM"))
-                continue;
-
-            const char *val = icalproperty_get_value_as_string(prop);
-            if (strcasecmpsafe(val, "TRUE") || has_usedefaultalerts) {
-                // Remove conflicting or duplicate entries
-                icalcomponent_remove_property(comp, prop);
-                icalproperty_free(prop);
+            if (!strcasecmp(icalproperty_get_x_name(prop), "X-APPLE-DEFAULT-ALARM")) {
+                const char *val = icalproperty_get_value_as_string(prop);
+                if (strcasecmpsafe(val, "TRUE") || has_apple) {
+                    icalcomponent_remove_property(comp, prop);
+                    icalproperty_free(prop);
+                }
+                else has_apple = 1;
             }
-            else has_usedefaultalerts = 1;
+            else if (!strcasecmp(icalproperty_get_x_name(prop), "X-JMAP-USEDEFAULTALERT")) {
+                const char *val = icalproperty_get_value_as_string(prop);
+                if (strcasecmpsafe(val, "TRUE") || has_jmap) {
+                    icalcomponent_remove_property(comp, prop);
+                    icalproperty_free(prop);
+                }
+                else has_jmap = 1;
+            }
         }
 
-        if (!has_usedefaultalerts) {
+        if (!has_apple) {
             prop = icalproperty_new(ICAL_X_PROPERTY);
             icalproperty_set_x_name(prop, "X-APPLE-DEFAULT-ALARM");
+            icalproperty_set_value(prop, icalvalue_new_boolean(1));
+            icalcomponent_add_property(comp, prop);
+        }
+
+        if (!has_jmap) {
+            prop = icalproperty_new(ICAL_X_PROPERTY);
+            icalproperty_set_x_name(prop, "X-JMAP-USEDEFAULTALERT");
             icalproperty_set_value(prop, icalvalue_new_boolean(1));
             icalcomponent_add_property(comp, prop);
         }

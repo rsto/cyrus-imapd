@@ -4845,6 +4845,14 @@ static void updateevent_apply_patch_event(json_t *old_event,
             *err = json_pack("{s:s}", "type", "invalidPatch");
             goto done;
         }
+
+        // Only set useDefaultAlerts if explicitly set by client
+        if (!json_object_get(event_patch, "useDefaultAlerts")) {
+            json_t *jval = json_object_get(new_event, "useDefaultAlerts");
+            if (!json_boolean_value(jval)) {
+                json_object_del(new_event, "useDefaultAlerts");
+            }
+        }
     }
 
     /* Handle UTC time updates */
