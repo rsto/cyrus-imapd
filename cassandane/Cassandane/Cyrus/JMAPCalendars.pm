@@ -19564,26 +19564,7 @@ sub test_calendarevent_set_defaultalerts_icalprops
     :min_version_3_7 :needs_component_jmap
 {
     my ($self) = @_;
-
     my $jmap = $self->{jmap};
-
-    xlog "share calendar";
-    my ($shareeJmap) = $self->create_user('sharee');
-    my $res = $jmap->CallMethods([
-        ['Calendar/set', {
-            update => {
-                Default => {
-                    shareWith => {
-                        sharee => {
-                            mayReadItems => JSON::true,
-                            mayWriteAll => JSON::true,
-                        },
-                    },
-                },
-            },
-        }, 'R1'],
-    ]);
-    $self->assert(exists $res->[0][1]{updated}{Default});
 
     xlog "Create event without useDefaultAlerts set";
     my $res = $jmap->CallMethods([
@@ -19606,10 +19587,10 @@ sub test_calendarevent_set_defaultalerts_icalprops
     ]);
     my $eventId = $res->[0][1]{created}{event}{id};
     $self->assert_not_null($eventId);
-    my $ownerBlobId = $res->[0][1]{created}{event}{blobId};
-    $self->assert_not_null($ownerBlobId);
+    my $blobId = $res->[0][1]{created}{event}{blobId};
+    $self->assert_not_null($blobId);
 
-    my $ical = $jmap->Download('cassandane', $ownerBlobId)->{content};
+    my $ical = $jmap->Download('cassandane', $blobId)->{content};
     $self->assert(not $ical =~ qr/X-APPLE-DEFAULT-ALARM/);
     $self->assert(not $ical =~ qr/X-JMAP-USEDEFAULTALERTS/);
 
@@ -19623,10 +19604,10 @@ sub test_calendarevent_set_defaultalerts_icalprops
             },
         }, 'R1'],
     ]);
-    $ownerBlobId = $res->[0][1]{updated}{$eventId}{blobId};
-    $self->assert_not_null($ownerBlobId);
+    $blobId = $res->[0][1]{updated}{$eventId}{blobId};
+    $self->assert_not_null($blobId);
 
-    $ical = $jmap->Download('cassandane', $ownerBlobId)->{content};
+    $ical = $jmap->Download('cassandane', $blobId)->{content};
     $self->assert(not $ical =~ qr/X-APPLE-DEFAULT-ALARM/);
     $self->assert(not $ical =~ qr/X-JMAP-USEDEFAULTALERTS/);
 
@@ -19640,10 +19621,10 @@ sub test_calendarevent_set_defaultalerts_icalprops
             },
         }, 'R1'],
     ]);
-    $ownerBlobId = $res->[0][1]{updated}{$eventId}{blobId};
-    $self->assert_not_null($ownerBlobId);
+    $blobId = $res->[0][1]{updated}{$eventId}{blobId};
+    $self->assert_not_null($blobId);
 
-    $ical = $jmap->Download('cassandane', $ownerBlobId)->{content};
+    $ical = $jmap->Download('cassandane', $blobId)->{content};
     $self->assert($ical =~ qr/X-APPLE-DEFAULT-ALARM;VALUE=BOOLEAN:TRUE/);
     $self->assert($ical =~ qr/X-JMAP-USEDEFAULTALERTS;VALUE=BOOLEAN:TRUE/);
 
@@ -19657,13 +19638,121 @@ sub test_calendarevent_set_defaultalerts_icalprops
             },
         }, 'R1'],
     ]);
-    $ownerBlobId = $res->[0][1]{updated}{$eventId}{blobId};
-    $self->assert_not_null($ownerBlobId);
+    $blobId = $res->[0][1]{updated}{$eventId}{blobId};
+    $self->assert_not_null($blobId);
 
-    $ical = $jmap->Download('cassandane', $ownerBlobId)->{content};
+    $ical = $jmap->Download('cassandane', $blobId)->{content};
     $self->assert(not $ical =~ qr/X-APPLE-DEFAULT-ALARM/);
     $self->assert($ical =~ qr/X-JMAP-USEDEFAULTALERTS;VALUE=BOOLEAN:FALSE/);
 }
 
+sub test_calendarevent_set_defaultalerts_shared
+    :min_version_3_7 :needs_component_jmap
+{
+    my ($self) = @_;
+    my $jmap = $self->{jmap};
+
+    xlog "share calendar";
+    my ($shareeJmap) = $self->create_user('sharee');
+    my $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    shareWith => {
+                        sharee => {
+                            mayReadItems => JSON::true,
+                            mayWriteAll => JSON::true,
+                        },
+                    },
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{Default});
+
+    xlog "Owner creates event";
+    $res = $jmap->CallMethods([
+        ['CalendarEvent/set', {
+            create => {
+                event => {
+                    calendarIds => {
+                        Default => JSON::true,
+                    },
+                    title => "event",
+                    start => "2020-01-19T11:00:00",
+                    duration => "PT1H",
+                    timeZone => "Australia/Melbourne",
+                },
+            },
+        }, 'R1'],
+    ]);
+    my $eventId = $res->[0][1]{created}{event}{id};
+    $self->assert_not_null($eventId);
+
+    xlog "Owner default value is false";
+    $res = $jmap->CallMethods([
+        ['CalendarEvent/get', {
+            properties => ['useDefaultAlerts'],
+        }, 'R1'],
+    ]);
+    $self->assert_equals(JSON::false, $res->[0][1]{list}[0]{useDefaultAlerts});
+
+    xlog "Sharee default value is true";
+    $res = $shareeJmap->CallMethods([
+        ['CalendarEvent/get', {
+            accountId => 'cassandane',
+            properties => ['useDefaultAlerts'],
+        }, 'R1'],
+    ]);
+    $self->assert_equals(JSON::true, $res->[0][1]{list}[0]{useDefaultAlerts});
+
+    xlog "Owner sets useDefaultAlerts to true";
+    $res = $jmap->CallMethods([
+        ['CalendarEvent/set', {
+            update => {
+                $eventId => {
+                    useDefaultAlerts => JSON::true,
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{$eventId});
+
+    xlog "Sharee sets useDefaultAlerts to false";
+    $res = $shareeJmap->CallMethods([
+        ['CalendarEvent/set', {
+            accountId => 'cassandane',
+            update => {
+                $eventId => {
+                    useDefaultAlerts => JSON::true,
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{$eventId});
+
+=pod
+    $blobId = $res->[0][1]{updated}{$eventId}{blobId};
+    $self->assert_not_null($blobId);
+
+    $ical = $shareeJmap->Download('cassandane', $blobId)->{content};
+    xlog "XXXXXXXXXXXXXXXXXXXXXXX" . Dumper($ical);
+=cut
+
+    $res = $jmap->CallMethods([
+        ['CalendarEvent/get', {
+            properties => ['useDefaultAlerts'],
+        }, 'R1'],
+    ]);
+    $self->assert_equals(JSON::true, $res->[0][1]{list}[0]{useDefaultAlerts});
+
+    $res = $shareeJmap->CallMethods([
+        ['CalendarEvent/get', {
+            accountId => 'cassandane',
+            properties => ['useDefaultAlerts'],
+        }, 'R1'],
+    ]);
+    $self->assert_equals(JSON::false, $res->[0][1]{list}[0]{useDefaultAlerts});
+}
 
 1;

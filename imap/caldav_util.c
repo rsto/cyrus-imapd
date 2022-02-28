@@ -336,8 +336,8 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
     "PATCH-DELETE:#TRANSP\r\n"            \
     "PATCH-DELETE:#X-MOZ-LASTACK\r\n"     \
     "PATCH-DELETE:#X-MOZ-SNOOZE-TIME\r\n" \
-    "PATCH-DELETE:#X-APPLE-DEFAULT-ALARM\r\n" \
     "PATCH-DELETE:#X-JMAP-USEDEFAULTALERTS\r\n" \
+    "PATCH-DELETE:#X-APPLE-DEFAULT-ALARM\r\n" \
     "END:PATCH\r\n"                       \
     "END:VPATCH\r\n)"
 

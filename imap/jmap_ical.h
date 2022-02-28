@@ -112,6 +112,7 @@ struct jmapical_ctx {
     } attachments;
     struct {
         char *emailrecipient;
+        int use_defaultalerts_default;
     } alert;
     struct {
         json_t *serverset;

@@ -3747,6 +3747,7 @@ static int jmap_calendarevent_get(struct jmap_req *req)
     construct_hashu64_table(&rock.cache_jsevents, 512, 0);
     construct_hash_table(&rock.floatingtz_by_mboxid, 64, 0);
 
+
     /* Parse request */
     jmap_get_parse(req, &parser, event_props, /*allow_null_ids*/1,
                    getcalendarevents_parse_args, &rock, &get, &err);
@@ -4735,6 +4736,7 @@ static void updateevent_apply_patch_event(json_t *old_event,
                                           json_t *event_patch,
                                           icalcomponent *oldical,
                                           icaltimezone *floatingtz,
+                                          struct jmapical_ctx *jmapctx,
                                           json_t **new_eventp,
                                           json_t *invalid,
                                           json_t **err)
@@ -4846,10 +4848,11 @@ static void updateevent_apply_patch_event(json_t *old_event,
             goto done;
         }
 
-        // Only set useDefaultAlerts if explicitly set by client
-        if (!json_object_get(event_patch, "useDefaultAlerts")) {
+        // Only set useDefaultAlerts if explicitly set by client to non-default
+        if (!json_object_get(event_patch, "useDefaultAlerts")) { 
+            json_t *jdef = json_boolean(jmapctx->alert.use_defaultalerts_default);
             json_t *jval = json_object_get(new_event, "useDefaultAlerts");
-            if (!json_boolean_value(jval)) {
+            if (json_equal(jdef, jval)) {
                 json_object_del(new_event, "useDefaultAlerts");
             }
         }
@@ -4997,6 +5000,7 @@ static int updateevent_apply_patch(jmap_req_t *req,
                                    json_t *update,
                                    json_t **err)
 {
+    struct jmapical_ctx *jmapctx = jmapical_context_new(req, schedule_addresses);
     json_t *new_event = NULL;
     json_t *old_event = NULL;
     int r = 0;
@@ -5049,7 +5053,6 @@ static int updateevent_apply_patch(jmap_req_t *req,
     }
 
     // Read old event
-    struct jmapical_ctx *jmapctx = jmapical_context_new(req, schedule_addresses);
     jmapctx->to_ical.serverset = update;
     context_begin_cdata(jmapctx, mbentry, cdata);
     old_event = jmapical_tojmap(myoldical, NULL, jmapctx);
@@ -5081,7 +5084,7 @@ static int updateevent_apply_patch(jmap_req_t *req,
 
         /* Update a regular event or standalone instance */
         updateevent_apply_patch_event(old_event, event_patch,
-                myoldical, floatingtz, &new_event, invalid, err);
+                myoldical, floatingtz, jmapctx, &new_event, invalid, err);
         if (!new_event) goto done;
     }
 

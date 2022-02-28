@@ -528,6 +528,16 @@ HIDDEN struct jmapical_ctx *jmapical_context_new(jmap_req_t *req,
 
     jmapctx->alert.emailrecipient = _emailalert_recipient(req->userid);
 
+    if (strcmp(req->accountid, req->userid)) {
+        char *calhomename = caldav_mboxname(req->accountid, NULL);
+        if (!caldav_is_secretarymode(calhomename)) {
+            // sharees of team-mode calendars default to true
+            jmapctx->alert.use_defaultalerts_default = 1;
+        }
+        free(calhomename);
+    }
+
+
     if (strarray_size(schedule_addresses)) {
         const char *imipaddr = strarray_nth(schedule_addresses, 0);
         struct buf buf = BUF_INITIALIZER;
@@ -3672,12 +3682,18 @@ calendarevent_from_ical(icalcomponent *comp,
 
     /* useDefaultAlerts */
     if (jmap_wantprop(props, "useDefaultAlerts")) {
+        json_t *jval = json_false();
+        if (jmapctx) {
+            jval = json_boolean(jmapctx->alert.use_defaultalerts_default);
+        }
         const char *v = get_icalxprop_value(comp, "X-APPLE-DEFAULT-ALARM");
         if (!v) {
             v = get_icalxprop_value(comp, "X-JMAP-USEDEFAULTALERTS");
         }
-        json_object_set_new(event, "useDefaultAlerts",
-                json_boolean(!strcasecmpsafe(v, "true")));
+        if (v) {
+            jval = json_boolean(!strcasecmp(v, "true"));
+        }
+        json_object_set_new(event, "useDefaultAlerts", jval);
     }
 
     /* alerts */
