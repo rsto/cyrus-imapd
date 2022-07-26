@@ -695,7 +695,8 @@ static int has_usedefaultalarms(icalcomponent *comp)
          prop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY)) {
         /* Check patch for default alerts properties */
         const char *xname = icalproperty_get_x_name(prop);
-        if (!strcasecmp(xname, "X-APPLE-DEFAULT-ALARM")) {
+        if (!strcasecmp(xname, "X-JMAP-USEDEFAULTALERTS") ||
+            !strcasecmp(xname, "X-APPLE-DEFAULT-ALARM")) {
             const char *strval = icalproperty_get_value_as_string(prop);
             if (!strcasecmpsafe(strval, "TRUE")) {
                 return 1;
@@ -845,7 +846,7 @@ static time_t process_alarms(const char *mboxname, uint32_t imap_uid,
     icalcomponent *myical = NULL;
 
     /* Add default alarms */
-    if (icalcomponent_read_usedefaultalerts(ical) > 0) {
+    if (icalcomponent_read_usedefaultalerts_value(ical) > 0) {
         static const char *withtime_annot =
             DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime";
         static const char *withdate_annot =
