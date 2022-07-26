@@ -1446,7 +1446,7 @@ EXPORTED int caldav_store_resource(struct transaction_t *txn, icalcomponent *ica
             }
         }
 
-        if (cdata->organizer) {
+        if (cdata->organizer || usedefaultalerts) {
             if (flags & NEW_STAG) txn->resp_body.stag = sched_tag;
 
             if (!(flags & PREFER_REP)) {
