@@ -2421,7 +2421,7 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
                                               icalcomponent **alerts_withtimep,
                                               icalcomponent **alerts_withdatep)
 {
-    int has_defaultalerts = 0;
+    int usedefaultalerts = 0;
     struct dlist *dl = NULL;
     struct buf userdata = BUF_INITIALIZER;
 
@@ -2429,16 +2429,16 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
         if (caldav_is_personalized(mailbox, cdata, httpd_userid, &userdata)) {
             dlist_parsemap(&dl, 1, 0, buf_base(&userdata), buf_len(&userdata));
             add_personal_data_from_dl(ical, dl);
-            has_defaultalerts = caldav_read_usedefaultalerts(dl, mailbox, record, &ical);
+            usedefaultalerts = caldav_usedefaultalerts(dl, mailbox, record, &ical);
         }
     }
 
-    if (!has_defaultalerts) {
-        has_defaultalerts = cdata->comp_flags.defaultalerts;
+    if (!usedefaultalerts) {
+        usedefaultalerts = cdata->comp_flags.defaultalerts;
     }
 
     /* Inject default alarms, if necessary */
-    if (has_defaultalerts) {
+    if (usedefaultalerts) {
         icalcomponent *withtime = alerts_withtimep ? *alerts_withtimep : NULL;
         icalcomponent *withdate = alerts_withdatep ? *alerts_withdatep : NULL;
 

@@ -3738,12 +3738,12 @@ calendarevent_from_ical(icalcomponent *comp,
 
     /* useDefaultAlerts */
     if (jmap_wantprop(props, "useDefaultAlerts")) {
-        const char *v = get_icalxprop_value(comp, "X-APPLE-DEFAULT-ALARM");
+        const char *v = get_icalxprop_value(comp, JMAPICAL_XPROP_USEDEFAULTALERTS);
         if (!v) {
-            /* Our previous jscalendar draft implementation used a custom
-             * extension property to denote useDefaultAlerts. We won't
-             * write this property anymore but fall back reading it. */
-            v = get_icalxprop_value(comp, "X-JMAP-USEDEFAULTALERTS");
+            /* Our previous jscalendar draft implementation erroneously
+             * used the X-APPLE-DEFAULT-ALARM annotation in the VEVENT,
+             * not the VALARM. Read it for backwards compatibility. */
+            v = get_icalxprop_value(comp, "X-APPLE-DEFAULT-ALARM");
         }
         json_object_set_new(event, "useDefaultAlerts",
                 json_boolean(!strcasecmpsafe(v, "true")));
@@ -7490,7 +7490,7 @@ static void calendarevent_to_ical(icalcomponent *comp,
         remove_icalxprop(comp, "X-APPLE-DEFAULT-ALARM");
         if (json_boolean_value(jprop)) {
             icalproperty *prop = icalproperty_new(ICAL_X_PROPERTY);
-            icalproperty_set_x_name(prop, "X-APPLE-DEFAULT-ALARM");
+            icalproperty_set_x_name(prop, JMAPICAL_XPROP_USEDEFAULTALERTS);
             icalproperty_set_value(prop, icalvalue_new_boolean(1));
             icalcomponent_add_property(comp, prop);
         }

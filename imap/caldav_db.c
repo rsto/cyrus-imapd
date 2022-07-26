@@ -1212,7 +1212,7 @@ EXPORTED int caldav_writeical(struct caldav_db *caldavdb, struct caldav_data *cd
          comp = icalcomponent_get_next_component(ical, kind)) {
 
         cdata->comp_flags.defaultalerts =
-            icalcomponent_read_usedefaultalerts(comp) > 0;
+            icalcomponent_read_usedefaultalerts_value(comp) > 0;
     }
 
     /* Read JMAP fields mayInviteSelf and mayInviteOthers */

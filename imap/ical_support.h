@@ -87,7 +87,7 @@ extern void icalproperty_set_xparam(icalproperty *prop,
 
 /* Returns if default alerts are explicitly enabled (1) or disabled (0).
    Returns -1 otherwise. */
-extern int icalcomponent_read_usedefaultalerts(icalcomponent *comp);
+extern int icalcomponent_read_usedefaultalerts_value(icalcomponent *comp);
 
 extern void icalcomponent_set_usedefaultalerts(icalcomponent *comp);
 

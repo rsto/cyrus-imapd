@@ -164,10 +164,10 @@ extern int caldav_bump_defaultalarms(struct mailbox *mailbox);
 
 extern void caldav_format_defaultalarms_annot(struct buf *dst, const char *icalstr);
 
-extern int caldav_read_usedefaultalerts(struct dlist *dl,
-                                        struct mailbox *mailbox,
-                                        const struct index_record *record,
-                                        icalcomponent **icalp);
+extern int caldav_usedefaultalerts(struct dlist *dl,
+                                   struct mailbox *mailbox,
+                                   const struct index_record *record,
+                                   icalcomponent **icalp);
 
 extern icaltimezone *caldav_get_calendar_tz(const char *mboxname, const char *userid);
 
