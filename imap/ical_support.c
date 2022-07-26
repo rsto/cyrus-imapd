@@ -2281,27 +2281,34 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
             }
 
             /* Add default VALARMs */
-            for (curr = icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT);
-                 curr;
-                 curr = icalcomponent_get_next_component(alerts, ICAL_VALARM_COMPONENT)) {
+            icalcomponent *alarm;
+            for (alarm = icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT);
+                 alarm;
+                 alarm = icalcomponent_get_next_component(alerts, ICAL_VALARM_COMPONENT)) {
 
-                icalcomponent *alarm = icalcomponent_clone(curr);
+                icalcomponent *myalarm = icalcomponent_clone(alarm);
 
                 /* Replace default description with component summary */
                 const char *desc = icalcomponent_get_summary(comp);
                 if (desc && *desc != '\0') {
                     icalproperty *prop =
-                        icalcomponent_get_first_property(alarm, ICAL_DESCRIPTION_PROPERTY);
+                        icalcomponent_get_first_property(myalarm, ICAL_DESCRIPTION_PROPERTY);
                     if (prop) {
-                        icalcomponent_remove_property(alarm, prop);
+                        icalcomponent_remove_property(myalarm, prop);
                         icalproperty_free(prop);
                     }
                     prop = icalproperty_new_description(desc);
-                    icalcomponent_add_property(alarm, prop);
+                    icalcomponent_add_property(myalarm, prop);
                 }
 
+                /* Apple's CalendarServer sets this on a default alarm */
+                icalproperty *prop = icalproperty_new(ICAL_X_PROPERTY);
+                icalproperty_set_x_name(prop, "X-APPLE-DEFAULT-ALARM");
+                icalproperty_set_value(prop, icalvalue_new_boolean(1));
+                icalcomponent_add_property(myalarm, prop);
+
                 /* Add alarm */
-                icalcomponent_add_component(comp, alarm);
+                icalcomponent_add_component(comp, myalarm);
             }
         }
     }
