@@ -5463,7 +5463,10 @@ HIDDEN icalcomponent *jmapical_alert_to_ical(json_t *alert,
     if (json_is_string(juid)) {
         icalcomponent_set_uid(alarm, json_string_value(juid));
     }
-    else if (juid) {
+    else if (!juid) {
+        icalcomponent_set_uid(alarm, makeuuid());
+    }
+    else {
         jmap_parser_invalid(parser, "uid");
     }
 
