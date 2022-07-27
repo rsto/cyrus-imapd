@@ -2662,6 +2662,11 @@ HIDDEN json_t *jmapical_alert_from_ical(icalcomponent *valarm, struct buf *idbuf
     struct buf buf = BUF_INITIALIZER;
     icalproperty *prop;
 
+    const char *uid = icalcomponent_get_uid(valarm);
+    if (uid) {
+        json_object_set_new(alert, "uid", json_string(uid));
+    }
+
     /* trigger */
     json_t *jtrigger = json_object();
     if (!icaldurationtype_is_null_duration(trigger.duration) ||
@@ -5423,7 +5428,7 @@ description_to_ical(icalcomponent *comp, struct jmap_parser *parser, json_t *jse
 
 HIDDEN icalcomponent *jmapical_alert_to_ical(json_t *alert,
                                              struct jmap_parser *parser,
-                                             const char *alert_uid,
+                                             const char *alert_jmapid,
                                              const char *summary,
                                              const char *description,
                                              const char *email_recipient)
@@ -5435,7 +5440,21 @@ HIDDEN icalcomponent *jmapical_alert_to_ical(json_t *alert,
     size_t invalid_prop_count = json_array_size(parser->invalid);
 
     validate_type(parser, alert, "Alert");
-    if (alert_uid) icalcomponent_set_uid(alarm, alert_uid);
+
+    if (alert_jmapid) {
+        icalproperty *prop = icalproperty_new_x(alert_jmapid);
+        icalproperty_set_x_name(prop, JMAPICAL_XPROP_ID);
+        icalcomponent_add_property(alarm, prop);
+    }
+
+    /* uid */
+    json_t *juid = json_object_get(alert, "uid");
+    if (json_is_string(juid)) {
+        icalcomponent_set_uid(alarm, json_string_value(juid));
+    }
+    else if (juid) {
+        jmap_parser_invalid(parser, "uid");
+    }
 
     /* trigger */
     struct icaltriggertype trigger = {

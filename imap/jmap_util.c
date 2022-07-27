@@ -1370,7 +1370,23 @@ EXPORTED char *jmap_role_to_specialuse(const char *role)
 EXPORTED void jmap_alertid_encode(icalcomponent *valarm, struct buf *idbuf)
 {
     buf_reset(idbuf);
-    const char *id = icalcomponent_get_uid(valarm);
+    const char *id = NULL;
+
+    icalproperty *prop;
+    for (prop = icalcomponent_get_first_property(valarm, ICAL_X_PROPERTY);
+         prop;
+         prop = icalcomponent_get_next_property(valarm, ICAL_X_PROPERTY)) {
+
+        if (!strcasecmp(icalproperty_get_x_name(prop), JMAPICAL_XPROP_ID)) {
+            id = icalproperty_get_value_as_string(prop);
+            break;
+        }
+    }
+
+    if (!id) {
+        id = icalcomponent_get_uid(valarm);
+    }
+
     char keybuf[2*SHA1_DIGEST_LENGTH+1];
     if (!id) {
         unsigned char dest[SHA1_DIGEST_LENGTH];
@@ -1380,5 +1396,6 @@ EXPORTED void jmap_alertid_encode(icalcomponent *valarm, struct buf *idbuf)
         keybuf[2*SHA1_DIGEST_LENGTH] = '\0';
         id = keybuf;
     }
+
     buf_setcstr(idbuf, id);
 }
