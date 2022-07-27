@@ -6723,7 +6723,8 @@ static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
                                   struct propstat propstat[],
                                   void *rock __attribute__((unused)))
 {
-    if (pctx->txn->req_tgt.collection && !pctx->txn->req_tgt.resource) {
+    if (pctx->txn->req_tgt.collection ||
+                (pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource)) {
         xmlChar *freeme = NULL;
         const char *icalstr = "";
         struct buf buf = BUF_INITIALIZER;

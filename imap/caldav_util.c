@@ -1756,12 +1756,12 @@ static int bumpdefaultalarms_cb(void *rock, struct caldav_data *cdata)
     return 0;
 }
 
-EXPORTED int caldav_bump_defaultalarms(struct mailbox *mailbox)
+static int caldav_bump_defaultalarms_mailbox(struct mailbox *mailbox)
 {
     struct mailbox_iter *iter = NULL;
-    mbentry_t *mbentry = NULL;
     struct caldav_db *db = NULL;
     int r = 0;
+    mbentry_t *mbentry = NULL;
 
     struct bumpdefaultalarms_data data = { BV_INITIALIZER, BV_INITIALIZER };
 
@@ -1874,6 +1874,51 @@ done:
     mailbox_iter_done(&iter);
     mboxlist_entry_free(&mbentry);
     caldav_close(db);
+    return r;
+}
+
+static int caldav_bump_defaultalarms_calhome_cb(const mbentry_t *mbentry,
+                                                void *rock __attribute__((unused)))
+{
+    struct mailbox *mailbox = NULL;
+    int r = mailbox_open_iwl(mbentry->name, &mailbox);
+
+    if (r) {
+        xsyslog(LOG_ERR, "mailbox_open_iwl",
+                "mboxname=<%s> uniqueid=<%s> err=<%s>",
+                mbentry->name, mbentry->uniqueid, error_message(r));
+        return r;
+    }
+
+    // TODO could avoid bumping the modseq for these calendars,
+    // where both the default alarms with and without time are
+    // overriden for this particular calendar mailbox
+
+    r = caldav_bump_defaultalarms_mailbox(mailbox);
+    mailbox_close(&mailbox);
+    return r;
+}
+
+EXPORTED int caldav_bump_defaultalarms(struct mailbox *mailbox)
+{
+    mbname_t *mbname = mbname_from_intname(mailbox_name(mailbox));
+    const strarray_t *boxes = mbname_boxes(mbname);
+    const char *prefix = config_getstring(IMAPOPT_CALENDARPREFIX);
+    int r = 0;
+
+    if (strarray_size(boxes) == 1 &&
+            !strcmpsafe(prefix, strarray_nth(boxes, 0))) {
+        // This is the calendar home. Bump alerts in the calendars.
+        r = mboxlist_mboxtree(mailbox_name(mailbox),
+                caldav_bump_defaultalarms_calhome_cb,
+                NULL, MBOXTREE_SKIP_ROOT);
+    }
+    else {
+        // Bump alerts in this calendar.
+        r = caldav_bump_defaultalarms_mailbox(mailbox);
+    }
+
+    mbname_free(&mbname);
     return r;
 }
 
