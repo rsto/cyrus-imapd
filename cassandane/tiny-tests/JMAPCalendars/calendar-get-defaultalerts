@@ -2,7 +2,7 @@
 use Cassandane::Tiny;
 
 sub test_calendar_get_defaultalerts
-    :min_version_3_1 :needs_component_jmap
+    :min_version_3_7 :needs_component_jmap
 {
     my ($self) = @_;
 
@@ -17,13 +17,13 @@ sub test_calendar_get_defaultalerts
     <D:prop>
 <C:default-alarm-vevent-datetime>
 BEGIN:VALARM
-UID:alert1
+UID:c5f1c439-d18d-4c98-89e1-211ccf752dec
 TRIGGER:-PT5M
 ACTION:DISPLAY
 DESCRIPTION:alarmTime1
 END:VALARM
 BEGIN:VALARM
-UID:alert2
+UID:37859148-2801-45bf-bdb8-528d5704788c
 TRIGGER:PT0M
 ACTION:DISPLAY
 DESCRIPTION:alarmTime2
@@ -35,7 +35,7 @@ END:VALARM
     <D:prop>
 <C:default-alarm-vevent-date>
 BEGIN:VALARM
-UID:alert3
+UID:bc0c8431-503e-427a-bb2d-6a1e2fca2d3f
 TRIGGER:PT0S
 ACTION:DISPLAY
 DESCRIPTION:alarmDate1
@@ -55,8 +55,9 @@ EOF
         }, 'R1']
     ]);
     $self->assert_deep_equals({
-        alert1 => {
+        'c5f1c439-d18d-4c98-89e1-211ccf752dec' => {
             '@type' => 'Alert',
+            uid => 'c5f1c439-d18d-4c98-89e1-211ccf752dec',
             trigger => {
                 '@type' => 'OffsetTrigger',
                 relativeTo => 'start',
@@ -64,8 +65,9 @@ EOF
             },
             action => 'display',
         },
-        alert2 =>  {
+        '37859148-2801-45bf-bdb8-528d5704788c' => {
             '@type' => 'Alert',
+            uid => '37859148-2801-45bf-bdb8-528d5704788c',
             trigger => {
                 '@type' => 'OffsetTrigger',
                 relativeTo => 'start',
@@ -74,9 +76,11 @@ EOF
             action => 'display',
         }
     }, $res->[0][1]{list}[0]{defaultAlertsWithTime});
+
     $self->assert_deep_equals({
-        alert3 => {
+        'bc0c8431-503e-427a-bb2d-6a1e2fca2d3f' => {
             '@type' => 'Alert',
+            uid => 'bc0c8431-503e-427a-bb2d-6a1e2fca2d3f',
             trigger => {
                 '@type' => 'OffsetTrigger',
                 relativeTo => 'start',
