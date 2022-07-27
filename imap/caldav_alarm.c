@@ -52,6 +52,7 @@
 #include "append.h"
 #include "caldav_alarm.h"
 #include "caldav_db.h"
+#include "caldav_util.h"
 #include "cyrusdb.h"
 #include "httpd.h"
 #include "http_dav.h"
@@ -847,15 +848,12 @@ static time_t process_alarms(const char *mboxname, uint32_t imap_uid,
 
     /* Add default alarms */
     if (icalcomponent_read_usedefaultalerts_value(ical) > 0) {
-        static const char *withtime_annot =
-            DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime";
-        static const char *withdate_annot =
-            DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date";
-
         icalcomponent *withtime =
-            read_calendar_icalalarms(mboxname, userid, withtime_annot);;
+            read_calendar_icalalarms(mboxname, userid,
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME);
         icalcomponent *withdate =
-            read_calendar_icalalarms(mboxname, userid, withdate_annot);
+            read_calendar_icalalarms(mboxname, userid,
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE);
 
         if (withtime || withdate) {
             myical = icalcomponent_clone(ical);

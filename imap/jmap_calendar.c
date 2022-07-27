@@ -758,17 +758,15 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
     }
 
     if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime")) {
-        static const char *annot =
-            DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime";
         json_object_set_new(obj, "defaultAlertsWithTime",
-                getcalendar_defaultalerts(req->userid, mbentry->name, annot));
+                getcalendar_defaultalerts(req->userid, mbentry->name,
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
     }
 
     if (jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
-        static const char *annot =
-            DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date";
         json_object_set_new(obj, "defaultAlertsWithoutTime",
-                getcalendar_defaultalerts(req->userid, mbentry->name, annot));
+                getcalendar_defaultalerts(req->userid, mbentry->name,
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
     }
 
     if (jmap_wantprop(rock->get->props, "timeZone")) {
@@ -1253,20 +1251,14 @@ static void setcalendar_apply_defaultalerts_patch(json_t *arg,
         json_t *cur = json_object();  /* Container for current defaultAlerts */
 
         if (withTime) {
-            /* Add current defaultAlertsWithTime to container */
-            static const char *annot =
-                DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime";
-
             json_object_set_new(cur, "defaultAlertsWithTime",
-                                getcalendar_defaultalerts(userid, mboxname, annot));
+                                getcalendar_defaultalerts(userid, mboxname,
+                                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
         }
         if (withoutTime) {
-            /* Add current defaultAlertsWithoutTime to container */
-            static const char *annot =
-                DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date";
-
             json_object_set_new(cur, "defaultAlertsWithoutTime",
-                                getcalendar_defaultalerts(userid, mboxname, annot));
+                                getcalendar_defaultalerts(userid, mboxname,
+                                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
         }
 
         json_t *new = jmap_patchobject_apply(cur, patches, invalid);
