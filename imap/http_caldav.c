@@ -6695,14 +6695,17 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
         }
     }
 
-    node = xml_add_prop(HTTP_OK, fctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
-                        name, ns, NULL, 0);
-    xmlAddChild(node, xmlNewCDataBlock(fctx->root->doc, BAD_CAST val, len));
+    if (len) {
+        node = xml_add_prop(HTTP_OK, fctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
+                name, ns, NULL, 0);
+        xmlAddChild(node, xmlNewCDataBlock(fctx->root->doc, BAD_CAST val, len));
+    }
+    else r = HTTP_NOT_FOUND;
 
     buf_free(&attrib);
     dlist_free(&dl);
 
-    return 0;
+    return r;
 }
 
 static void proppatch_defaultalarm_proc(struct proppatch_ctx *ctx)
