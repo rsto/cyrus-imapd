@@ -1,0 +1,77 @@
+#!perl
+use Cassandane::Tiny;
+use Data::UUID;
+
+sub test_calendar_set_defaultalerts_remove_caldav
+    :min_version_3_7 :needs_component_jmap
+{
+    my ($self) = @_;
+
+    my $jmap = $self->{jmap};
+    my $caldav = $self->{caldav};
+
+    xlog "Set default alarms";
+    my $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    defaultAlertsWithTime => {
+                        alert1 => {
+                            '@type' => 'Alert',
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT15M',
+                            },
+                            action => 'display',
+                        }
+                    },
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{Default});
+
+    xlog "PROPFIND for default alarms";
+    my $propfindXml = <<EOF;
+<?xml version="1.0" encoding="UTF-8"?>
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop>
+     <C:default-alarm-vevent-datetime/>
+  </D:prop>
+</D:propfind>
+EOF
+    $res = $caldav->Request('PROPFIND', "/dav/calendars/user/cassandane/Default",
+        $propfindXml, 'Content-Type' => 'text/xml');
+
+    my $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
+    $self->assert_not_null($ps->{'{DAV:}prop'}{
+        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'});
+    $self->assert_str_equals('HTTP/1.1 200 OK', $ps->{'{DAV:}status'}{content});
+
+    xlog "Remove default alarms";
+    my $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    defaultAlertsWithTime => undef,
+                },
+            },
+        }, 'R1'],
+        ['Calendar/get', {
+            ids => ['Default'],
+            properties => ['defaultAlertsWithTime'],
+        }, 'R2'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{Default});
+    $self->assert_null($res->[1][1]{list}[0]{defaultAlertsWithTime});
+
+    xlog "PROPFIND for default alarms";
+    $res = $caldav->Request('PROPFIND', "/dav/calendars/user/cassandane/Default",
+        $propfindXml, 'Content-Type' => 'text/xml');
+
+    $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
+    $self->assert_not_null($ps->{'{DAV:}prop'}{
+        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'});
+    $self->assert_str_equals('HTTP/1.1 404 Not Found', $ps->{'{DAV:}status'}{content});
+}

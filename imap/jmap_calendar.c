@@ -1186,11 +1186,11 @@ static void setcalendar_props_fini(struct setcalendar_props *props)
     }
 }
 
-static void setcalendar_readalerts(struct jmap_parser *parser,
-                                   const char *propname,
-                                   json_t *arg,
-                                   const char *emailrecipient,
-                                   ptrarray_t **alertsp)
+static void setcalendar_parsealerts(struct jmap_parser *parser,
+                                    const char *propname,
+                                    json_t *arg,
+                                    const char *emailrecipient,
+                                    ptrarray_t **alertsp)
 {
     ptrarray_t *alerts = NULL;
 
@@ -1288,7 +1288,7 @@ static void setcalendar_apply_defaultalerts_patch(json_t *arg,
     json_decref(patches);
 }
 
-static void setcalendar_readprops(jmap_req_t *req,
+static void setcalendar_parseprops(jmap_req_t *req,
                                   struct jmap_parser *parser,
                                   struct setcalendar_props *props,
                                   json_t *arg,
@@ -1525,9 +1525,9 @@ static void setcalendar_readprops(jmap_req_t *req,
     }
 
     struct jmapical_ctx *jmapctx = jmapical_context_new(req, NULL);
-    setcalendar_readalerts(parser, "defaultAlertsWithTime", arg,
+    setcalendar_parsealerts(parser, "defaultAlertsWithTime", arg,
             jmapctx->alert.emailrecipient, &props->defaultalerts_withtime);
-    setcalendar_readalerts(parser, "defaultAlertsWithoutTime", arg,
+    setcalendar_parsealerts(parser, "defaultAlertsWithoutTime", arg,
             jmapctx->alert.emailrecipient, &props->defaultalerts_withouttime);
     jmapical_context_free(&jmapctx);
 }
@@ -2028,7 +2028,7 @@ static void setcalendars_create(struct jmap_req *req,
     int r = 0;
 
     /* Parse and validate properties. */
-    setcalendar_readprops(req, &parser, &props, arg, /*is_create*/NULL);
+    setcalendar_parseprops(req, &parser, &props, arg, /*is_create*/NULL);
     if (props.share.With) {
         if (!jmap_hasrights(req, parentname, ACL_ADMIN)) {
             jmap_parser_invalid(&parser, "shareWith");
@@ -2124,7 +2124,7 @@ static void setcalendars_update(jmap_req_t *req,
 
     /* Parse and validate properties. */
     struct setcalendar_props props;
-    setcalendar_readprops(req, &parser, &props, arg, mboxname);
+    setcalendar_parseprops(req, &parser, &props, arg, mboxname);
     if (props.share.With) {
         if (!jmap_hasrights(req, mboxname, ACL_ADMIN)) {
             jmap_parser_invalid(&parser, "shareWith");

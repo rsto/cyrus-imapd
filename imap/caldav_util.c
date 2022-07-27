@@ -1728,8 +1728,10 @@ EXPORTED int caldav_write_defaultalarms(struct mailbox *mailbox,
         }
         else buf_setcstr(&raw, icalcomponent_as_ical_string(ical));
 
-        caldav_format_defaultalarms_annot(&val, buf_cstring(&raw));
-        buf_free(&raw);
+        if (buf_len(&raw)) {
+            caldav_format_defaultalarms_annot(&val, buf_cstring(&raw));
+            buf_free(&raw);
+        }
     }
 
     r = annotate_state_writemask(astate, annot, userid, &val);
