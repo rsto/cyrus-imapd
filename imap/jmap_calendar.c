@@ -1163,25 +1163,28 @@ struct setcalendar_props {
     } share;
     long comp_types;
     ptrarray_t *defaultalerts_withtime;    // list of VALARM icalcomponent*
-    ptrarray_t *defaultalerts_withouttime; // list of VALARM icalcomponent*
+    ptrarray_t *defaultalerts_withdate; // list of VALARM icalcomponent*
 };
+
+static void free_defaultalerts(ptrarray_t **defaultalertsp)
+{
+    if (!defaultalertsp || !*defaultalertsp) return;
+
+    ptrarray_t *defaultalerts = *defaultalertsp;
+
+    icalcomponent *valarm;
+    while ((valarm = ptrarray_pop(defaultalerts))) {
+        icalcomponent_free(valarm);
+    }
+    ptrarray_free(defaultalerts);
+
+    *defaultalertsp = NULL;
+}
 
 static void setcalendar_props_fini(struct setcalendar_props *props)
 {
-    if (props->defaultalerts_withtime) {
-        icalcomponent *valarm;
-        while ((valarm = ptrarray_pop(props->defaultalerts_withtime))) {
-            icalcomponent_free(valarm);
-        }
-        ptrarray_free(props->defaultalerts_withtime);
-    }
-    if (props->defaultalerts_withouttime) {
-        icalcomponent *valarm;
-        while ((valarm = ptrarray_pop(props->defaultalerts_withouttime))) {
-            icalcomponent_free(valarm);
-        }
-        ptrarray_free(props->defaultalerts_withouttime);
-    }
+    free_defaultalerts(&props->defaultalerts_withtime);
+    free_defaultalerts(&props->defaultalerts_withdate);
 }
 
 static void setcalendar_parsealerts(struct jmap_parser *parser,
@@ -1222,10 +1225,10 @@ static void setcalendar_parsealerts(struct jmap_parser *parser,
     *alertsp = alerts;
 }
 
-static void setcalendar_apply_defaultalerts_patch(json_t *arg,
+static void patch_current_defaultalerts_into_args(json_t *arg,
+                                                  struct jmap_parser *parser,
                                                   const char *userid,
-                                                  const char *mboxname,
-                                                  json_t *invalid)
+                                                  const char *mboxname)
 {
     json_t *patches = json_object();  /* Container for defaultAlerts patches */
     unsigned withTime = 0, withoutTime = 0;
@@ -1261,7 +1264,7 @@ static void setcalendar_apply_defaultalerts_patch(json_t *arg,
                                     CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
         }
 
-        json_t *new = jmap_patchobject_apply(cur, patches, invalid);
+        json_t *new = jmap_patchobject_apply(cur, patches, parser->invalid);
 
         /* Add patched defaultAlerts to /set args */
         json_object_foreach(new, field, jval) {
@@ -1278,6 +1281,82 @@ static void setcalendar_apply_defaultalerts_patch(json_t *arg,
     }
 
     json_decref(patches);
+}
+
+
+static void parse_defaultalert_args(jmap_req_t *req,
+                                    struct jmap_parser *parser,
+                                    json_t *args,
+                                    const char *calmboxname,
+                                    int is_create,
+                                    ptrarray_t **withtimep,
+                                    ptrarray_t **withdatep)
+{
+    if (!is_create) {
+        patch_current_defaultalerts_into_args(args,
+                parser, req->userid, calmboxname);
+    }
+
+    struct jmapical_ctx *jmapctx = jmapical_context_new(req, NULL);
+    setcalendar_parsealerts(parser, "defaultAlertsWithTime", args,
+            jmapctx->alert.emailrecipient, withtimep);
+    setcalendar_parsealerts(parser, "defaultAlertsWithoutTime", args,
+            jmapctx->alert.emailrecipient, withdatep);
+    jmapical_context_free(&jmapctx);
+}
+
+static int write_defaultalerts(jmap_req_t *req, struct mailbox *mbox,
+                               ptrarray_t *withtime, ptrarray_t *withdate)
+{
+    int r = 0;
+
+    if (withtime) {
+        /* Wrap alarms with XROOT component */
+        icalcomponent *ical = icalcomponent_new(ICAL_XROOT_COMPONENT);
+        int i;
+        for (i = 0; i < ptrarray_size(withtime); i++) {
+            icalcomponent *valarm = ptrarray_nth(withtime, i);
+            icalcomponent_add_component(ical, valarm);
+        }
+        /* XROOT component takes ownership of alarms */
+        ptrarray_fini(withtime);
+        /* Write alarms */
+        r = caldav_write_defaultalarms(mbox, req->userid,
+                CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, ical);
+        if (r) {
+            syslog(LOG_ERR, "failed to write annotation %s: %s",
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, error_message(r));
+        }
+        icalcomponent_free(ical);
+    }
+    if (!r && withdate) {
+        /* Wrap alarms with XROOT component */
+        icalcomponent *ical = icalcomponent_new(ICAL_XROOT_COMPONENT);
+        int i;
+        for (i = 0; i < ptrarray_size(withdate); i++) {
+            icalcomponent *valarm = ptrarray_nth(withdate, i);
+            icalcomponent_add_component(ical, valarm);
+        }
+        /* XROOT component takes ownership of alarms */
+        ptrarray_fini(withdate);
+        /* Write alarms */
+        r = caldav_write_defaultalarms(mbox, req->userid,
+                CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, ical);
+        if (r) {
+            syslog(LOG_ERR, "failed to write annotation %s: %s",
+                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, error_message(r));
+        }
+        icalcomponent_free(ical);
+    }
+    if (!r) {
+        r = caldav_bump_defaultalarms(mbox);
+        if (r) {
+            syslog(LOG_ERR, "failed to bump default alarms for %s: %s",
+                    mailbox_name(mbox), error_message(r));
+        }
+    }
+
+    return r;
 }
 
 static void setcalendar_parseprops(jmap_req_t *req,
@@ -1511,17 +1590,9 @@ static void setcalendar_parseprops(jmap_req_t *req,
 
     /* defaultAlertsWithTime */
     /* defaultAlertsWithoutTime */
-    if (!is_create) {
-        setcalendar_apply_defaultalerts_patch(arg, req->userid,
-                                              mboxname, parser->invalid);
-    }
-
-    struct jmapical_ctx *jmapctx = jmapical_context_new(req, NULL);
-    setcalendar_parsealerts(parser, "defaultAlertsWithTime", arg,
-            jmapctx->alert.emailrecipient, &props->defaultalerts_withtime);
-    setcalendar_parsealerts(parser, "defaultAlertsWithoutTime", arg,
-            jmapctx->alert.emailrecipient, &props->defaultalerts_withouttime);
-    jmapical_context_free(&jmapctx);
+    parse_defaultalert_args(req, parser, arg, mboxname, is_create,
+            &props->defaultalerts_withtime,
+            &props->defaultalerts_withdate);
 }
 
 /* Write  the calendar properties in the calendar mailbox named mboxname.
@@ -1728,52 +1799,9 @@ static int setcalendar_writeprops(jmap_req_t *req,
     }
 
     /* defaultAlertsWithTime */
-    if (!r && (props->defaultalerts_withtime || props->defaultalerts_withouttime)) {
-        if (props->defaultalerts_withtime) {
-            /* Wrap alarms with XROOT component */
-            icalcomponent *ical = icalcomponent_new(ICAL_XROOT_COMPONENT);
-            int i;
-            for (i = 0; i < ptrarray_size(props->defaultalerts_withtime); i++) {
-                icalcomponent *valarm = ptrarray_nth(props->defaultalerts_withtime, i);
-                icalcomponent_add_component(ical, valarm);
-            }
-            /* XROOT component takes ownership of alarms */
-            ptrarray_fini(props->defaultalerts_withtime);
-            /* Write alarms */
-            r = caldav_write_defaultalarms(mbox, req->userid,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, ical);
-            if (r) {
-                syslog(LOG_ERR, "failed to write annotation %s: %s",
-                        CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, error_message(r));
-            }
-            icalcomponent_free(ical);
-        }
-        if (!r && props->defaultalerts_withouttime) {
-            /* Wrap alarms with XROOT component */
-            icalcomponent *ical = icalcomponent_new(ICAL_XROOT_COMPONENT);
-            int i;
-            for (i = 0; i < ptrarray_size(props->defaultalerts_withouttime); i++) {
-                icalcomponent *valarm = ptrarray_nth(props->defaultalerts_withouttime, i);
-                icalcomponent_add_component(ical, valarm);
-            }
-            /* XROOT component takes ownership of alarms */
-            ptrarray_fini(props->defaultalerts_withouttime);
-            /* Write alarms */
-            r = caldav_write_defaultalarms(mbox, req->userid,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, ical);
-            if (r) {
-                syslog(LOG_ERR, "failed to write annotation %s: %s",
-                        CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, error_message(r));
-            }
-            icalcomponent_free(ical);
-        }
-        if (!r) {
-            r = caldav_bump_defaultalarms(mbox);
-            if (r) {
-                syslog(LOG_ERR, "failed to bump default alarms for %s: %s",
-                        mailbox_name(mbox), error_message(r));
-            }
-        }
+    if (!r && (props->defaultalerts_withtime || props->defaultalerts_withdate)) {
+        r = write_defaultalerts(req, mbox,
+                props->defaultalerts_withtime, props->defaultalerts_withdate);
     }
 
     buf_free(&val);
@@ -11275,6 +11303,16 @@ static const jmap_property_t calendarpreferences_props[] = {
         NULL,
         0
     },
+    {
+        "defaultAlertsWithTime",
+        JMAP_CALENDARS_EXTENSION,
+        0
+    },
+    {
+        "defaultAlertsWithoutTime",
+        JMAP_CALENDARS_EXTENSION,
+        0
+    },
     { NULL, NULL, 0 }
 };
 
@@ -11360,6 +11398,21 @@ static int jmap_calendarpreferences_get(struct jmap_req *req)
             json_object_set_new(jprefs, "defaultParticipantIdentityId", jpartid);
         }
 
+        if (jmap_is_using(req, JMAP_CALENDARS_EXTENSION)) {
+
+            if (jmap_wantprop(get.props, "defaultAlertsWithTime")) {
+                json_object_set_new(jprefs, "defaultAlertsWithTime",
+                        getcalendar_defaultalerts(req->userid, calhomename,
+                            CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
+            }
+
+            if (jmap_wantprop(get.props, "defaultAlertsWithoutTime")) {
+                json_object_set_new(jprefs, "defaultAlertsWithoutTime",
+                        getcalendar_defaultalerts(req->userid, calhomename,
+                            CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
+            }
+        }
+
         json_array_append_new(get.list, jprefs);
     }
 
@@ -11390,8 +11443,18 @@ static void calendarpreferences_set(struct jmap_req *req,
 
     struct mailbox *calhomembox = NULL;
     annotate_state_t *astate = NULL;
+    ptrarray_t *defaultalerts_withtime = NULL;
+    ptrarray_t *defaultalerts_withdate = NULL;
 
     /* Validate properties */
+
+    /* defaultAlertsWithTime */
+    /* defaultAlertsWithoutTime */
+    parse_defaultalert_args(req, parser, jprefs, mbcalhome->name,
+            /*is_create*/0, &defaultalerts_withtime, &defaultalerts_withdate);
+    json_object_del(jprefs, "defaultAlertsWithTime");
+    json_object_del(jprefs, "defaultAlertsWithoutTime");
+
     const char *prop;
     json_t *jval;
     json_object_foreach(jprefs, prop, jval) {
@@ -11422,11 +11485,12 @@ static void calendarpreferences_set(struct jmap_req *req,
         }
     }
 
+
     if (json_array_size(parser->invalid)) {
         *err = json_pack("{s:s, s:O}",
                     "type", "invalidProperties",
                     "properties", parser->invalid);
-        return;
+        goto done;
     }
 
     r = jmap_openmbox(req, mbcalhome->name, &calhomembox, 1);
@@ -11518,10 +11582,23 @@ static void calendarpreferences_set(struct jmap_req *req,
         }
     }
 
+    /* Set default alerts */
+    if (defaultalerts_withtime || defaultalerts_withdate) {
+        r = write_defaultalerts(req, calhomembox,
+                defaultalerts_withtime, defaultalerts_withdate);
+        if (r) {
+            xsyslog(LOG_ERR, "can not set default alerts",
+                    "err=<%s>", error_message(r));
+            goto done;
+        }
+    }
+
 done:
     if (r && *err == NULL) {
         *err = jmap_server_error(r);
     }
+    free_defaultalerts(&defaultalerts_withtime);
+    free_defaultalerts(&defaultalerts_withdate);
     jmap_closembox(req, &calhomembox);
     buf_free(&buf);
 }
