@@ -229,24 +229,27 @@ done:
     buf_free(&buf);
 }
 
-static void add_defaultalarm_guid(const char *mboxname, const char *userid,
-                                  char *buf, size_t *buflen)
+static void add_defaultalarm_etagdata(const char *mboxname,
+                                      const struct index_record *record,
+                                      const char *userid,
+                                      struct buf *etagdata)
 {
     struct message_guid withtime_guid;
     caldav_read_defaultalarms_guid(mboxname, userid,
             CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, &withtime_guid);
     if (!message_guid_isnull(&withtime_guid)) {
-        message_guid_export(&withtime_guid, buf + (*buflen));
-        *buflen += MESSAGE_GUID_SIZE;
+        buf_appendcstr(etagdata, message_guid_encode(&withtime_guid));
     }
 
     struct message_guid withdate_guid;
     caldav_read_defaultalarms_guid(mboxname, userid,
             CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, &withdate_guid);
     if (!message_guid_isnull(&withdate_guid)) {
-        message_guid_export(&withdate_guid, buf + (*buflen));
-        *buflen += MESSAGE_GUID_SIZE;
+        buf_appendcstr(etagdata, message_guid_encode(&withdate_guid));
     }
+
+    // XXX not strictly necessary if default alarms are sane
+    buf_appendbit64(etagdata, record->modseq);
 }
 
 EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
@@ -256,6 +259,7 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
 
     const struct caldav_data *cdata = (const struct caldav_data *) data;
     struct buf userdata = BUF_INITIALIZER;
+    struct buf etagdata = BUF_INITIALIZER;
 
     int r = dav_get_validators(mailbox, data, userid, record, etag, lastmod);
     if (r) return r;
@@ -269,27 +273,23 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
         dlist_parsemap(&dl, 1, 0, buf_base(&userdata), buf_len(&userdata));
 
         if (etag) {
-            char buf[4*MESSAGE_GUID_SIZE];
-            size_t buf_len = 2*MESSAGE_GUID_SIZE;
-            struct message_guid *user_guid;
+            struct message_guid *userdata_guid;
 
-            dlist_getguid(dl, "GUID", &user_guid);
+            dlist_getguid(dl, "GUID", &userdata_guid);
 
-            /* Per-user ETag is GUID of concatenated GUIDs */
-            message_guid_export(&record->guid, buf);
-            message_guid_export(user_guid, buf+MESSAGE_GUID_SIZE);
+            /* Per-user ETag is hash of both on-disk and per-user GUID */
+            buf_appendcstr(&etagdata, message_guid_encode(&record->guid));
+            if (userdata_guid)
+                buf_appendcstr(&etagdata, message_guid_encode(userdata_guid));
 
-            /* Read default alarm GUID from per-user data */
+            /* Mix in default alarm data, if any */
             icalcomponent *ical = NULL;
             int defaultalerts = caldav_usedefaultalerts(dl, mailbox, record, &ical);
             if (defaultalerts) {
-                add_defaultalarm_guid(mailbox_name(mailbox), userid, buf, &buf_len);
+                add_defaultalarm_etagdata(mailbox_name(mailbox), record, userid, &etagdata);
             }
             icalcomponent_free(ical);
 
-            /* Generate ETag */
-            message_guid_generate(user_guid, buf, buf_len);
-            *etag = message_guid_encode(user_guid);
         }
         if (lastmod) {
             time_t user_lastmod;
@@ -305,21 +305,21 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
     }
     else if (cdata->comp_flags.defaultalerts) {
         if (etag) {
-            char buf[4*MESSAGE_GUID_SIZE];
-            size_t buf_len = MESSAGE_GUID_SIZE;
-
-            message_guid_export(&record->guid, buf);
-            add_defaultalarm_guid(mailbox_name(mailbox), userid, buf, &buf_len);
-
-            struct message_guid guid;
-            message_guid_generate(&guid, buf, buf_len);
-            *etag = message_guid_encode(&guid);
+            buf_appendcstr(&etagdata, message_guid_encode(&record->guid));
+            add_defaultalarm_etagdata(mailbox_name(mailbox), record, userid, &etagdata);
         }
         if (lastmod) {
             /* XXX  What, if anything do we do here? */
         }
     }
 
+    if (etag && buf_len(&etagdata)) {
+        struct message_guid etag_guid;
+        message_guid_generate(&etag_guid, buf_base(&etagdata), buf_len(&etagdata));
+        *etag = message_guid_encode(&etag_guid);
+    }
+
+    buf_free(&etagdata);
     return 0;
 }
 
