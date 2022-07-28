@@ -141,12 +141,21 @@ extern void caldav_rewrite_attachprop_to_url(struct webdav_db *webdavdb,
 
 /* Read the default alarms for mailbox mboxname and userid as
  * icalcomponent. Fallback to reading default alarms on the
- * calendar home, if requested.The VALARMs are wrapped inside
+ * calendar home, if requested. The VALARMs are wrapped inside
  * a libical XROOT component */
-extern icalcomponent *caldav_read_calendar_icalalarms(const char *mboxname,
-                                                      const char *userid,
-                                                      const char *annot,
-                                                      int fallback_calhome);
+extern icalcomponent *caldav_read_defaultalarms(const char *mboxname,
+                                                const char *userid,
+                                                const char *annot,
+                                                int fallback_calhome);
+
+/* Read the annotation value and parse it into is constituent parts.
+ * Each of the output arguments guid, content and is_dlist are nullable. */
+extern int caldav_read_defaultalarms_annot_value(const char *mboxname,
+                                                 const char *userid,
+                                                 const char *annot,
+                                                 struct message_guid *guid,
+                                                 struct buf *content,
+                                                 int *is_dlist);
 
 /* Write the default alarms in ical to annot, or delete if ical is NULL.
  * The alarms MUST be wrapped in either a XROOT or VCALENDAR component. */
