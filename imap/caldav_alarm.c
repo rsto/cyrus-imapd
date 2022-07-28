@@ -812,6 +812,14 @@ static icalcomponent *read_calendar_icalalarms(const char *mboxname,
 
     annotatemore_lookupmask(mboxname, annot, userid, &buf);
 
+    if (!buf_len(&buf)) {
+        char *calhomename = caldav_mboxname(userid, NULL);
+        if (strcmp(mboxname, calhomename)) {
+            annotatemore_lookupmask(calhomename, annot, userid, &buf);
+        }
+        free(calhomename);
+    }
+
     if (buf_len(&buf)) {
         struct dlist *dl = NULL;
         if (dlist_parsemap(&dl, 1, 0, buf_base(&buf), buf_len(&buf)) == 0) {

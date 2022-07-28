@@ -210,6 +210,15 @@ static void caldav_read_defaultalarms_guid(const char *mboxname,
     struct dlist *dl = NULL;
 
     annotatemore_lookupmask(mboxname, annot, userid, &buf);
+
+    if (!buf_len(&buf)) {
+        char *calhomename = caldav_mboxname(userid, NULL);
+        if (strcmp(mboxname, calhomename)) {
+            annotatemore_lookupmask(calhomename, annot, userid, &buf);
+        }
+        free(calhomename);
+    }
+
     if (buf_len(&buf)) {
         /* Attempt to read guid from dlist */
         if (dlist_parsemap(&dl, 1, 0, buf.s, buf.len) == 0) {
@@ -284,8 +293,7 @@ EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
 
             /* Mix in default alarm data, if any */
             icalcomponent *ical = NULL;
-            int defaultalerts = caldav_usedefaultalerts(dl, mailbox, record, &ical);
-            if (defaultalerts) {
+            if (caldav_usedefaultalerts(dl, mailbox, record, &ical)) {
                 add_defaultalarm_etagdata(mailbox_name(mailbox), record, userid, &etagdata);
             }
             icalcomponent_free(ical);
@@ -1666,11 +1674,23 @@ static int caldav_read_defaultalarms(const char *mboxname,
 
 EXPORTED icalcomponent *caldav_read_calendar_icalalarms(const char *mboxname,
                                                         const char *userid,
-                                                        const char *annot)
+                                                        const char *annot,
+                                                        int fallback_calhome)
+
 {
     icalcomponent *ical = NULL;
     struct buf buf = BUF_INITIALIZER;
+
     caldav_read_defaultalarms(mboxname, userid, annot, &buf);
+
+    if (!buf_len(&buf) && fallback_calhome) {
+        char *calhomename = caldav_mboxname(userid, NULL);
+        if (strcmp(mboxname, calhomename)) {
+            caldav_read_defaultalarms(calhomename, userid, annot, &buf);
+        }
+        free(calhomename);
+    }
+
     if (buf_len(&buf)) {
         ical = icalparser_parse_string(buf_cstring(&buf));
         if (ical) {
@@ -1683,6 +1703,7 @@ EXPORTED icalcomponent *caldav_read_calendar_icalalarms(const char *mboxname,
             }
         }
     }
+
     buf_free(&buf);
     return ical;
 }
@@ -1908,7 +1929,7 @@ EXPORTED int caldav_bump_defaultalarms(struct mailbox *mailbox)
 
     if (strarray_size(boxes) == 1 &&
             !strcmpsafe(prefix, strarray_nth(boxes, 0))) {
-        // This is the calendar home. Bump alerts in the calendars.
+        // Bump alerts in all calendars.
         r = mboxlist_mboxtree(mailbox_name(mailbox),
                 caldav_bump_defaultalarms_calhome_cb,
                 NULL, MBOXTREE_SKIP_ROOT);

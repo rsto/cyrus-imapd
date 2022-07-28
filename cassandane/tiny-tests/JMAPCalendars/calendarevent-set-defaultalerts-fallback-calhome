@@ -1,0 +1,162 @@
+#!perl
+use Cassandane::Tiny;
+
+sub test_calendarevent_set_defaultalerts_fallback_calhome
+    :min_version_3_7 :needs_component_jmap
+{
+    my ($self) = @_;
+
+    my $jmap = $self->{jmap};
+    my $caldav = $self->{caldav};
+
+    my $calendarDefaultAlarmUid = '4c76663f-3e62-4c5c-9e4b-6793a06360bf';
+    my $calendarHomeDefaultAlarmUid = '699f2ffc-66c8-49b7-8013-f767e337b7af';
+
+    xlog "Set default alerts on calendar and event";
+    my $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    defaultAlertsWithTime => {
+                        alert1 => {
+                            '@type' => 'Alert',
+                            uid => $calendarDefaultAlarmUid,
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT5M',
+                            },
+                            action => 'display',
+                        },
+                    },
+                }
+            }
+        }, 'R1'],
+        ['CalendarEvent/set', {
+            create => {
+                event1 => {
+                    uid => 'abe41a3f-2b29-4424-923c-a3dd7e268f83',
+                    calendarIds => {
+                        Default => JSON::true,
+                    },
+                    title => "event1",
+                    start => "2020-01-19T11:00:00",
+                    duration => "PT1H",
+                    timeZone => "Australia/Melbourne",
+                    useDefaultAlerts => JSON::true,
+                },
+            },
+        }, 'R2'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{Default});
+    my $xhref = $res->[1][1]{created}{event1}{'x-href'};
+    $self->assert_not_null($xhref);
+
+    xlog "Get VEVENT and ETag";
+    my %Headers;
+    if ($caldav->{user}) {
+        $Headers{'Authorization'} = $caldav->auth_header();
+    }
+    my $res = $caldav->{ua}->request('GET',
+        $caldav->request_url($xhref), {
+            headers => \%Headers,
+    });
+    my $etag = $res->{headers}{etag};
+    $self->assert_not_null($etag);
+
+    xlog "Assert VALARM of calendar is in VEVENT";
+    $self->assert($res->{content} =~ $calendarDefaultAlarmUid);
+
+    xlog "Set default alerts on calendar home";
+    my $res = $jmap->CallMethods([
+        ['CalendarPreferences/set', {
+            update => {
+                singleton => {
+                    defaultAlertsWithTime => {
+                        alert1 => {
+                            '@type' => 'Alert',
+                            uid => $calendarHomeDefaultAlarmUid,
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT1H',
+                            },
+                            action => 'display',
+                        },
+                    },
+                }
+            }
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{singleton});
+
+    xlog "Get VEVENT and ETag";
+    $res = $caldav->{ua}->request('GET',
+        $caldav->request_url($xhref), {
+            headers => \%Headers,
+    });
+
+    # Really, the ETag should NOT change here. But this
+    # how it is currently done in Cyrus.
+    xlog "Assert Etag is changed (implementation-specific)";
+    $self->assert_str_not_equals($etag, $res->{headers}{etag});
+
+    xlog "Assert VALARM of calendar is in VEVENT";
+    $self->assert($res->{content} =~ $calendarDefaultAlarmUid);
+
+    xlog "Assert VALARM of calendar home is not in VEVENT";
+    $self->assert(not $res->{content} =~ $calendarHomeDefaultAlarmUid);
+
+    xlog "Remove default alerts from calendar";
+    my $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    defaultAlertsWithTime => undef,
+                }
+            }
+        }, 'R1'],
+    ]);
+
+    xlog "Get VEVENT and ETag";
+    $res = $caldav->{ua}->request('GET',
+        $caldav->request_url($xhref), {
+            headers => \%Headers,
+    });
+
+    xlog "Assert Etag is changed";
+    $self->assert_str_not_equals($etag, $res->{headers}{etag});
+    $etag = $res->{headers}{etag};
+    $self->assert_not_null($etag);
+
+    xlog "Assert VALARM of calendar is not in VEVENT";
+    $self->assert(not $res->{content} =~ $calendarDefaultAlarmUid);
+
+    xlog "Assert VALARM of calendar home is in VEVENT";
+    $self->assert($res->{content} =~ $calendarHomeDefaultAlarmUid);
+
+    xlog "Remove default alerts from calendar home";
+    my $res = $jmap->CallMethods([
+        ['CalendarPreferences/set', {
+            update => {
+                singleton => {
+                    defaultAlertsWithTime => undef,
+                }
+            }
+        }, 'R1'],
+    ]);
+
+    xlog "Get VEVENT and ETag";
+    $res = $caldav->{ua}->request('GET',
+        $caldav->request_url($xhref), {
+            headers => \%Headers,
+    });
+
+    xlog "Assert Etag is changed";
+    $self->assert_str_not_equals($etag, $res->{headers}{etag});
+    $etag = $res->{headers}{etag};
+    $self->assert_not_null($etag);
+
+    xlog "Assert no VALARM is in VEVENT";
+    $self->assert(not $res->{content} =~ 'VALARM');
+}

@@ -2454,7 +2454,8 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
         if (!withtime) {
             withtime =
                 caldav_read_calendar_icalalarms(mailbox_name(mailbox),
-                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHTIME);
+                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHTIME,
+                        /*fallback_calhome */1);
 
             if (!withtime)
                 withtime = icalcomponent_new(ICAL_XROOT_COMPONENT);
@@ -2466,7 +2467,8 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
         if (!withdate) {
             withdate =
                 caldav_read_calendar_icalalarms(mailbox_name(mailbox),
-                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHDATE);
+                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHDATE,
+                        /*fallback_calhome */1);
 
             if (!withdate)
                 withdate = icalcomponent_new(ICAL_XROOT_COMPONENT);

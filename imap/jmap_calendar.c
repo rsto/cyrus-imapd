@@ -486,7 +486,9 @@ static json_t *getcalendar_defaultalerts(const char *userid,
                                          const char *mboxname,
                                          const char *annot)
 {
-    icalcomponent *ical = caldav_read_calendar_icalalarms(mboxname, userid, annot);
+    icalcomponent *ical =
+        caldav_read_calendar_icalalarms(mboxname, userid, annot,
+                /*fallback_calhome*/0);
     if (!ical) return json_null();
 
     json_t *alerts = json_object();
