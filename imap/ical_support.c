@@ -2246,6 +2246,23 @@ EXPORTED void icalcomponent_set_usedefaultalerts(icalcomponent *comp)
     } while (ical && comp);
 }
 
+static const char *generate_valarm_trigger_id(icalcomponent *valarm, struct buf *buf)
+{
+    icalproperty *prop = icalcomponent_get_first_property(valarm, ICAL_ACTION_PROPERTY);
+    if (prop) {
+        buf_setcstr(buf, icalproperty_enum_to_string(icalproperty_get_action(prop)));
+    }
+
+    prop = icalcomponent_get_first_property(valarm, ICAL_TRIGGER_PROPERTY);
+    if (prop) {
+        struct icaltriggertype trigger = icalproperty_get_trigger(prop);
+        buf_appendcstr(buf, icaltime_as_ical_string(trigger.time));
+        buf_appendcstr(buf, icaldurationtype_as_ical_string(trigger.duration));
+    }
+
+    return buf_len(buf) ? buf_cstring(buf) : NULL;
+}
+
 EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
                                               icalcomponent *withtime,
                                               icalcomponent *withdate,
@@ -2259,8 +2276,66 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
     if (kind != ICAL_VEVENT_COMPONENT && kind != ICAL_VTODO_COMPONENT)
         return;
 
-    /* Add default alarms */
+    strarray_t acknowledged_uids = STRARRAY_INITIALIZER;
+    strarray_t acknowledged_triggers = STRARRAY_INITIALIZER;
+    struct buf buf = BUF_INITIALIZER;
+
     for ( ; comp; comp = icalcomponent_get_next_component(ical, kind)) {
+
+        /* Gather acknowledged VALARMs */
+        icalcomponent *valarm;
+        for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
+             valarm;
+             valarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT)) {
+
+            if (icalcomponent_get_first_property(valarm, ICAL_ACKNOWLEDGED_PROPERTY)) {
+                // Keep track of acknowledged alarms
+                const char *uid = icalcomponent_get_uid(valarm);
+                if (uid) {
+                    strarray_append(&acknowledged_uids, uid);
+                }
+
+                const char *triggerid = generate_valarm_trigger_id(valarm, &buf);
+                if (triggerid) {
+                    strarray_append(&acknowledged_triggers, uid);
+                }
+            }
+        }
+
+        /* Gather snoozed VALARMs, remove any other VALARM */
+        for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
+             valarm;
+             valarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT)) {
+
+            const char *uid = icalcomponent_get_uid(valarm);
+            if (uid) {
+                icalproperty *prop = icalcomponent_get_first_property(valarm, ICAL_RELATEDTO_PROPERTY);
+                if (prop) {
+                    const char *related_uid = icalproperty_get_relatedto(prop);
+                    if (strarray_find(&acknowledged_uids, related_uid, 0) >= 0) {
+                        // Any VALARM related to an acknowledged alarm
+                        // also is acknowledged for our purposes
+                        strarray_append(&acknowledged_uids, uid);
+                    }
+                }
+            }
+        }
+
+        /* Remove all unacknowledged VALARMs */
+        icalcomponent *nextvalarm;
+        for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
+                valarm; valarm = nextvalarm) {
+
+            nextvalarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT);
+
+            const char *uid = icalcomponent_get_uid(valarm);
+            if (!uid || strarray_find(&acknowledged_uids, uid, 0) < 0) {
+                icalcomponent_remove_component(comp, valarm);
+                icalcomponent_free(valarm);
+            }
+        }
+
+        /* Add default alarms */
         if (force || icalcomponent_read_usedefaultalerts_value(comp) > 0) {
 
             /* Determine which default alarms to add */
@@ -2281,22 +2356,22 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
             if (!icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT))
                 break;
 
-            /* Remove VALARMs in component */
-            icalcomponent *curr, *next = NULL;
-            for (curr = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
-                    curr; curr = next) {
-                next = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT);
-                icalcomponent_remove_component(comp, curr);
-                icalcomponent_free(curr);
-            }
+            icalcomponent *valarm;
+            for (valarm = icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT);
+                 valarm;
+                 valarm = icalcomponent_get_next_component(alerts, ICAL_VALARM_COMPONENT)) {
 
-            /* Add default VALARMs */
-            icalcomponent *alarm;
-            for (alarm = icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT);
-                 alarm;
-                 alarm = icalcomponent_get_next_component(alerts, ICAL_VALARM_COMPONENT)) {
+                // Do not add already acknowledged alarms
+                const char *uid = icalcomponent_get_uid(valarm);
+                if (uid && strarray_find(&acknowledged_uids, uid, 0) >= 0)
+                    continue;
 
-                icalcomponent *myalarm = icalcomponent_clone(alarm);
+                const char *triggerid = generate_valarm_trigger_id(valarm, &buf);
+                if (triggerid && strarray_find(&acknowledged_triggers, triggerid, 0) >= 0)
+                    continue;
+
+                // Add alarm
+                icalcomponent *myalarm = icalcomponent_clone(valarm);
 
                 /* Replace default description with component summary */
                 const char *desc = icalcomponent_get_summary(comp);
@@ -2321,7 +2396,15 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
                 icalcomponent_add_component(comp, myalarm);
             }
         }
+
+        buf_reset(&buf);
+        strarray_fini(&acknowledged_uids);
+        strarray_fini(&acknowledged_triggers);
     }
+
+    buf_free(&buf);
+    strarray_fini(&acknowledged_uids);
+    strarray_fini(&acknowledged_triggers);
 }
 
 static void check_tombstone(struct observance *tombstone,
