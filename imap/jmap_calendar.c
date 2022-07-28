@@ -482,11 +482,11 @@ struct getcalendars_rock {
     int skip_hidden;
 };
 
-static json_t *getcalendar_defaultalerts(const char *userid,
-                                         const char *mboxname,
+static json_t *getcalendar_defaultalerts(const char *mboxname,
+                                         const char *userid,
                                          const char *annot)
 {
-    icalcomponent *ical = caldav_read_calendar_icalalarms(mboxname, userid, annot);
+    icalcomponent *ical = caldav_read_defaultalarms(mboxname, userid, annot);
     if (!ical) return json_null();
 
     json_t *alerts = json_object();
@@ -586,6 +586,48 @@ calendar_sharewith_to_rights_iter:
     }
 
     return newrights;
+}
+
+static void getcalendar_defaultalerts_debug(json_t *jobj,
+                                            const char *mboxname,
+                                            const char *userid)
+{
+    struct message_guid guid = MESSAGE_GUID_INITIALIZER;
+    struct buf content = BUF_INITIALIZER;
+    int is_dlist = 0;
+    json_t *jannotval = json_null();
+
+    int r = caldav_read_defaultalarms_annot_value(mboxname, userid,
+            CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, &guid, &content, &is_dlist);
+    if (!r) {
+        jannotval = json_object();
+        json_object_set_new(jannotval, "guid",
+                json_string(message_guid_encode(&guid)));
+        json_object_set_new(jannotval, "content",
+                json_string(buf_cstring(&content)));
+        json_object_set_new(jannotval, "isDlist", json_boolean(is_dlist));
+    }
+    json_object_set_new(jobj, "defaultAlertsWithTimeAnnot", jannotval);
+
+    message_guid_set_null(&guid);
+    buf_reset(&content);
+    is_dlist = 0;
+    jannotval = json_null();
+
+    r = caldav_read_defaultalarms_annot_value(mboxname, userid,
+            CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, &guid, &content, &is_dlist);
+
+    if (!r) {
+        jannotval = json_object();
+        json_object_set_new(jannotval, "guid",
+                json_string(message_guid_encode(&guid)));
+        json_object_set_new(jannotval, "content",
+                json_string(buf_cstring(&content)));
+        json_object_set_new(jannotval, "isDlist", json_boolean(is_dlist));
+    }
+    json_object_set_new(jobj, "defaultAlertsWithoutTimeAnnot", jannotval);
+
+    buf_free(&content);
 }
 
 static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
@@ -757,16 +799,24 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
         buf_free(&attrib);
     }
 
-    if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime")) {
-        json_object_set_new(obj, "defaultAlertsWithTime",
-                getcalendar_defaultalerts(req->userid, mbentry->name,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
-    }
+    if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime") ||
+        jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
 
-    if (jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
-        json_object_set_new(obj, "defaultAlertsWithoutTime",
-                getcalendar_defaultalerts(req->userid, mbentry->name,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
+        if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime")) {
+            json_object_set_new(obj, "defaultAlertsWithTime",
+                    getcalendar_defaultalerts(mbentry->name, req->userid,
+                        CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
+        }
+
+        if (jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
+            json_object_set_new(obj, "defaultAlertsWithoutTime",
+                    getcalendar_defaultalerts(mbentry->name, req->userid,
+                        CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
+        }
+
+        if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
+            getcalendar_defaultalerts_debug(obj, mbentry->name, req->userid);
+        }
     }
 
     if (jmap_wantprop(rock->get->props, "timeZone")) {
@@ -1255,12 +1305,12 @@ static void patch_current_defaultalerts_into_args(json_t *arg,
 
         if (withTime) {
             json_object_set_new(cur, "defaultAlertsWithTime",
-                                getcalendar_defaultalerts(userid, mboxname,
+                                getcalendar_defaultalerts(mboxname, userid,
                                     CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
         }
         if (withoutTime) {
             json_object_set_new(cur, "defaultAlertsWithoutTime",
-                                getcalendar_defaultalerts(userid, mboxname,
+                                getcalendar_defaultalerts(mboxname, userid,
                                     CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
         }
 
@@ -11399,17 +11449,24 @@ static int jmap_calendarpreferences_get(struct jmap_req *req)
         }
 
         if (jmap_is_using(req, JMAP_CALENDARS_EXTENSION)) {
+            if (jmap_wantprop(get.props, "defaultAlertsWithTime") ||
+                    jmap_wantprop(get.props, "defaultAlertsWithoutTime")) {
 
-            if (jmap_wantprop(get.props, "defaultAlertsWithTime")) {
-                json_object_set_new(jprefs, "defaultAlertsWithTime",
-                        getcalendar_defaultalerts(req->userid, calhomename,
-                            CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
-            }
+                if (jmap_wantprop(get.props, "defaultAlertsWithTime")) {
+                    json_object_set_new(jprefs, "defaultAlertsWithTime",
+                            getcalendar_defaultalerts(calhomename, req->userid,
+                                CALDAV_DEFAULTALARMS_ANNOT_WITHTIME));
+                }
 
-            if (jmap_wantprop(get.props, "defaultAlertsWithoutTime")) {
-                json_object_set_new(jprefs, "defaultAlertsWithoutTime",
-                        getcalendar_defaultalerts(req->userid, calhomename,
-                            CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
+                if (jmap_wantprop(get.props, "defaultAlertsWithoutTime")) {
+                    json_object_set_new(jprefs, "defaultAlertsWithoutTime",
+                            getcalendar_defaultalerts(calhomename, req->userid,
+                                CALDAV_DEFAULTALARMS_ANNOT_WITHDATE));
+                }
+
+                if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
+                    getcalendar_defaultalerts_debug(jprefs, calhomename, req->userid);
+                }
             }
         }
 

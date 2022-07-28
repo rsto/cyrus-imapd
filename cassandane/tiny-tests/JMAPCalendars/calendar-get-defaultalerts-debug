@@ -1,0 +1,174 @@
+#!perl
+use Cassandane::Tiny;
+
+sub test_calendar_get_defaultalerts_debug
+    :min_version_3_7 :needs_component_jmap
+{
+    my ($self) = @_;
+    my $jmap = $self->{jmap};
+
+    xlog "Update default alarms in CalendarPreferences";
+    my $res = $jmap->CallMethods([
+        ['CalendarPreferences/set', {
+            update => {
+                singleton => {
+                    defaultAlertsWithTime => {
+                        calendarPrefAlertWithTime => {
+                            '@type' => 'Alert',
+                            uid => '95f5ad59-ee19-40c3-b900-04733478b5a0',
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT1H',
+                            },
+                            action => 'email',
+                        },
+                    },
+                    defaultAlertsWithoutTime => {
+                        calendarPrefAlertWithoutTime => {
+                            '@type' => 'Alert',
+                            uid => '74035b1b-489c-465c-bb3c-7a076313c597',
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT12H',
+                            },
+                            action => 'email',
+                        },
+                    }
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{singleton});
+
+    xlog "Update default alarms for default calendar";
+    $res = $jmap->CallMethods([
+        ['Calendar/set', {
+            update => {
+                Default => {
+                    defaultAlertsWithTime => {
+                        calendarAlertWithTime => {
+                            '@type' => 'Alert',
+                            uid => 'f650437a-af58-4f11-a303-fa86c51856ae',
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT2H',
+                            },
+                            action => 'display',
+                        },
+                    },
+                    defaultAlertsWithoutTime => {
+                        calendarAlertWithoutTime => {
+                            '@type' => 'Alert',
+                            uid => '94258895-bb42-4e50-8069-3827edc499c9',
+                            trigger => {
+                                '@type' => 'OffsetTrigger',
+                                relativeTo => 'start',
+                                offset => '-PT16H',
+                            },
+                            action => 'display',
+                        },
+                    }
+                },
+            },
+        }, 'R1'],
+    ]);
+    $self->assert(exists $res->[0][1]{updated}{Default});
+
+    xlog "Get default alarms without debug";
+    $res = $jmap->CallMethods([
+        ['CalendarPreferences/get', {
+            properties => [
+                'defaultAlertsWithTime',
+                'defaultAlertsWithoutTime'
+            ],
+        }, 'R1'],
+        ['Calendar/get', {
+            ids => ['Default'],
+            properties => [
+                'defaultAlertsWithTime',
+                'defaultAlertsWithoutTime'
+            ],
+        }, 'R2'],
+    ], [
+        'urn:ietf:params:jmap:core',
+        'urn:ietf:params:jmap:calendars',
+        'urn:ietf:params:jmap:principals',
+        'urn:ietf:params:jmap:calendars:preferences',
+        'https://cyrusimap.org/ns/jmap/calendars',
+    ]);
+
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithTime}{calendarPrefAlertWithTime});
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithoutTime}{calendarPrefAlertWithoutTime});
+    $self->assert_null($res->[0][1]{list}[0]{debug});
+
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithTime}{calendarAlertWithTime});
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithoutTime}{calendarAlertWithoutTime});
+    $self->assert_null($res->[1][1]{list}[0]{debug});
+
+    xlog "Get default alarms with debug";
+    $res = $jmap->CallMethods([
+        ['CalendarPreferences/get', {
+            properties => [
+                'defaultAlertsWithTime',
+                'defaultAlertsWithoutTime'
+            ],
+        }, 'R1'],
+        ['Calendar/get', {
+            ids => ['Default'],
+            properties => [
+                'defaultAlertsWithTime',
+                'defaultAlertsWithoutTime'
+            ],
+        }, 'R2'],
+    ], [
+        'urn:ietf:params:jmap:core',
+        'urn:ietf:params:jmap:calendars',
+        'urn:ietf:params:jmap:principals',
+        'urn:ietf:params:jmap:calendars:preferences',
+        'https://cyrusimap.org/ns/jmap/calendars',
+        'https://cyrusimap.org/ns/jmap/debug',
+    ]);
+
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithTime}{calendarPrefAlertWithTime});
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{guid});
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{content});
+    $self->assert_equals(JSON::true, $res->[0][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{isDlist});
+
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithoutTime}{calendarPrefAlertWithoutTime});
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{guid});
+    $self->assert_not_null($res->[0][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{content});
+    $self->assert_equals(JSON::true, $res->[0][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{isDlist});
+
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithTime}{calendarAlertWithTime});
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{guid});
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{content});
+    $self->assert_equals(JSON::true, $res->[1][1]{list}[0]{
+        defaultAlertsWithTimeAnnot}{isDlist});
+
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithoutTime}{calendarAlertWithoutTime});
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{guid});
+    $self->assert_not_null($res->[1][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{content});
+    $self->assert_equals(JSON::true, $res->[1][1]{list}[0]{
+        defaultAlertsWithoutTimeAnnot}{isDlist});
+}

@@ -140,11 +140,20 @@ extern void caldav_rewrite_attachprop_to_url(struct webdav_db *webdavdb,
     DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date"
 
 /* Read the default alarms for mailbox mboxname and userid as
- * icalcomponent. The VALARMs are wrapped inside a libical
- * XROOT component */
-extern icalcomponent *caldav_read_calendar_icalalarms(const char *mboxname,
-                                                      const char *userid,
-                                                      const char *annot);
+ * icalcomponent. The VALARMs are wrapped inside
+ * a libical XROOT component */
+extern icalcomponent *caldav_read_defaultalarms(const char *mboxname,
+                                                const char *userid,
+                                                const char *annot);
+
+/* Read the annotation value and parse it into is constituent parts.
+ * Each of the output arguments guid, content and is_dlist are nullable. */
+extern int caldav_read_defaultalarms_annot_value(const char *mboxname,
+                                                 const char *userid,
+                                                 const char *annot,
+                                                 struct message_guid *guid,
+                                                 struct buf *content,
+                                                 int *is_dlist);
 
 /* Write the default alarms in ical to annot, or delete if ical is NULL.
  * The alarms MUST be wrapped in either a XROOT or VCALENDAR component. */
