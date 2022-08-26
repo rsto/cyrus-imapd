@@ -1540,6 +1540,7 @@ lib_libcyrus_la_SOURCES += lib/nonblock_ioctl.c
 endif
 lib_libcyrus_la_LIBADD = libcrc32.la ${LIB_SASL} $(SSL_LIBS) $(GCOV_LIBS)
 lib_libcyrus_la_CFLAGS = $(AM_CFLAGS) $(CFLAG_VISIBILITY)
+#lib_libcyrus_la_CXXFLAGS = $(AM_CXXFLAGS) $(CFLAG_VISIBILITY)
 
 if USE_ZEROSKIP
 lib_libcyrus_la_SOURCES += lib/cyrusdb_zeroskip.c
@@ -1547,6 +1548,12 @@ lib_libcyrus_la_LIBADD += $(ZEROSKIP_LIBS)
 lib_libcyrus_la_CFLAGS += $(ZEROSKIP_CFLAGS)
 AM_CPPFLAGS += $(ZEROSKIP_CFLAGS)
 endif
+
+#if USE_ROCKSDB
+lib_libcyrus_la_SOURCES += lib/cyrusdb_rocksdb.cpp
+#lib_libcyrus_la_LIBADD += $(ROCKSDB_LIBS)
+#lib_libcyrus_la_CXXFLAGS += $(ROCKSDB_CFLAGS)
+#endif
 
 noinst_LTLIBRARIES += libcrc32.la
 libcrc32_la_SOURCES = lib/crc32.c

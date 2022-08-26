@@ -1488,6 +1488,20 @@ AC_SUBST([ZEROSKIP_LIBS])
 AC_SUBST([ZEROSKIP_CFLAGS])
 AM_CONDITIONAL([USE_ZEROSKIP], [test "x$with_zeroskip" = xyes])
 
+dnl AC_ARG_WITH([rocksdb],
+dnl 	[AS_HELP_STRING([--without-rocksdb], [ignore presence of RocksDB and disable it])],
+dnl     [],
+dnl     [with_rocksdb=yes])
+dnl AS_IF([test "x$with_rocksdb" = "xyes"],
+dnl 	[ PKG_CHECK_MODULES([ROCKSDB], [rocksdb],
+dnl 		[ AC_DEFINE(HAVE_ROCKSDB, [], [Do we have RocksDB?])
+dnl 		  with_rocksdb=yes ],
+dnl 		  with_rocksdb=no)])
+dnl AC_SUBST([ROCKSDB_LIBS])
+dnl AC_SUBST([ROCKSDB_CFLAGS])
+dnl AM_CONDITIONAL([USE_ROCKSDB], [test "x$with_rocksdb" = xyes])
+with_rocksdb = no
+
 dnl
 dnl Check for chardet library, needed for charset detection support
 dnl
@@ -2523,6 +2537,7 @@ Database support:
    postgresql:         $use_pgsql
    sqlite:             $use_sqlite
    zeroskip:           $with_zeroskip
+   rocksdb:            $with_rocksdb
 
 Search engine:
    squat:              $enable_squat
