@@ -283,6 +283,9 @@ static int propfind_shareesactas(const xmlChar *name, xmlNsPtr ns,
 static int proppatch_shareesactas(xmlNodePtr prop, unsigned set,
                                   struct proppatch_ctx *pctx,
                                   struct propstat propstat[], void *rock);
+static int proppatch_forbidden(xmlNodePtr prop, unsigned set,
+                                  struct proppatch_ctx *pctx,
+                                  struct propstat propstat[], void *rock);
 
 static int report_cal_query(struct transaction_t *txn,
                             struct meth_params *rparams,
@@ -575,16 +578,19 @@ static const struct prop_entry caldav_props[] = {
       PROP_COLLECTION | PROP_PERUSER,
       propfind_defaultalarm, proppatch_defaultalarm, NULL },
 
+
     /* JMAP calendar properties */
     { "sharees-act-as", NS_JMAPCAL,
         PROP_COLLECTION,
         propfind_shareesactas, proppatch_shareesactas, NULL },
+
+    // Make sure no one can set (or read) JMAP default alarms over DAV.
     { "defaultalerts-with-time", NS_JMAPCAL,
-      PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_defaultalarm, NULL },
+        PROP_COLLECTION | PROP_PERUSER,
+        NULL, proppatch_forbidden, NULL },
     { "defaultalerts-without-time", NS_JMAPCAL,
-      PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_defaultalarm, NULL },
+        PROP_COLLECTION | PROP_PERUSER,
+        NULL, proppatch_forbidden, NULL },
 
     { NULL, 0, 0, NULL, NULL, NULL }
 };
@@ -6659,7 +6665,7 @@ static int propfind_sharingmodes(const xmlChar *name, xmlNsPtr ns,
     return HTTP_NOT_FOUND;
 }
 
-/* Callback to fetch CALDAV and JMAP default alerts properties */
+/* Callback to fetch {CALDAV}default-alarm-vevent-date[time] */
 static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop __attribute__((unused)),
@@ -6688,7 +6694,11 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
     size_t len = buf_len(&attrib);
 
     /* Try to parse as dlist - we switched from storing the raw
-     * iCalendar payload to dlist for JMAP calendar alerts */
+     * iCalendar payload to dlist for JMAP calendar alerts.
+     * Now that we store JMAP calendar alerts in a different
+     * annotation, this isn't strictly necessary for Apple's
+     * CalDAV properties anymore. But let's keep the format
+     * of both annotations in sync. */
     struct dlist *dl = NULL;
     if (dlist_parsemap(&dl, 1, 0, buf_base(&attrib), buf_len(&attrib)) == 0) {
         const char *content = NULL;
@@ -6711,27 +6721,29 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
     return r;
 }
 
-static void proppatch_defaultalarm_proc(struct proppatch_ctx *ctx)
+/* Callback to reject a PROPPATCH as forbidden */
+static int proppatch_forbidden(xmlNodePtr prop,
+                                  unsigned set __attribute__((unused)),
+                                  struct proppatch_ctx *pctx,
+                                  struct propstat propstat[],
+                                  void *rock __attribute__((unused)))
 {
-    int r = caldav_bump_defaultalarms(ctx->mailbox);
-    if (r) {
-        syslog(LOG_ERR, "%s: can't bump default alarms: %s",
-                __func__, error_message(r));
-    }
+    xml_add_prop(HTTP_FORBIDDEN, pctx->ns[NS_DAV],
+                 &propstat[PROPSTAT_FORBID], prop->name, prop->ns, NULL, 0);
+
+    *pctx->ret = HTTP_FORBIDDEN;
+
+    return 0;
 }
 
-/* Callback to write CALDAV and JMAP default alarm properties */
+/* Callback to write {CALDAV}default-alarm-vevent-date[time] */
 static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
                                   struct proppatch_ctx *pctx,
                                   struct propstat propstat[],
                                   void *rock __attribute__((unused)))
 {
-    const char *xml_ns = prop->ns ? (const char*) prop->ns->href : NULL;
-
     if (pctx->txn->req_tgt.collection ||
-            // only allow to proppatch CalDAV alarms on calendar home
-            ((pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource) &&
-             !strcmpsafe(XML_NS_CALDAV, xml_ns))) {
+            (pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource)) {
         xmlChar *freeme = NULL;
         const char *icalstr = "";
         struct buf buf = BUF_INITIALIZER;
@@ -6747,20 +6759,6 @@ static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
 
         if (freeme) xmlFree(freeme);
         buf_free(&buf);
-
-        if (!strcmpsafe(XML_NS_JMAPCAL, xml_ns)) {
-            /* Bump JMAP default alarm events after PROPPATCH */
-            int i;
-            for (i = 0; i < ptrarray_size(&pctx->postprocs); i++) {
-                pctx_postproc_t *proc = ptrarray_nth(&pctx->postprocs, i);
-                if (proc == (pctx_postproc_t*) proppatch_defaultalarm_proc) {
-                    break;
-                }
-            }
-            if (i == ptrarray_size(&pctx->postprocs)) {
-                ptrarray_append(&pctx->postprocs, proppatch_defaultalarm_proc);
-            }
-        }
 
         return 0;
     }
