@@ -35,9 +35,9 @@ sub test_calendar_set_defaultalerts_remove_caldav
     xlog "PROPFIND for default alarms";
     my $propfindXml = <<EOF;
 <?xml version="1.0" encoding="UTF-8"?>
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:propfind xmlns:D="DAV:" xmlns:J="urn:ietf:params:jmap:calendars">
   <D:prop>
-     <C:default-alarm-vevent-datetime/>
+     <J:defaultalerts-with-time/>
   </D:prop>
 </D:propfind>
 EOF
@@ -46,7 +46,7 @@ EOF
 
     my $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
     $self->assert_not_null($ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'});
+        '{urn:ietf:params:jmap:calendars}defaultalerts-with-time'});
     $self->assert_str_equals('HTTP/1.1 200 OK', $ps->{'{DAV:}status'}{content});
 
     xlog "Remove default alarms";
@@ -72,6 +72,6 @@ EOF
 
     $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
     $self->assert_not_null($ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'});
+        '{urn:ietf:params:jmap:calendars}defaultalerts-with-time'});
     $self->assert_str_equals('HTTP/1.1 404 Not Found', $ps->{'{DAV:}status'}{content});
 }

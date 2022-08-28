@@ -566,6 +566,7 @@ static const struct prop_entry caldav_props[] = {
     { "pushkey", NS_CS,
       PROP_COLLECTION,
       propfind_pushkey, NULL, NULL },
+
     /* Apple Default Alarm properties */
     { "default-alarm-vevent-datetime", NS_CALDAV,
       PROP_COLLECTION | PROP_PERUSER,
@@ -578,6 +579,12 @@ static const struct prop_entry caldav_props[] = {
     { "sharees-act-as", NS_JMAPCAL,
         PROP_COLLECTION,
         propfind_shareesactas, proppatch_shareesactas, NULL },
+    { "defaultalerts-with-time", NS_JMAPCAL,
+      PROP_COLLECTION | PROP_PERUSER,
+      propfind_defaultalarm, proppatch_defaultalarm, NULL },
+    { "defaultalerts-without-time", NS_JMAPCAL,
+      PROP_COLLECTION | PROP_PERUSER,
+      propfind_defaultalarm, proppatch_defaultalarm, NULL },
 
     { NULL, 0, 0, NULL, NULL, NULL }
 };
@@ -2446,7 +2453,7 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
         if (!withtime) {
             withtime =
                 caldav_read_defaultalarms(mailbox_name(mailbox),
-                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHTIME);
+                        httpd_userid, JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME);
 
             if (!withtime)
                 withtime = icalcomponent_new(ICAL_XROOT_COMPONENT);
@@ -2458,7 +2465,7 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
         if (!withdate) {
             withdate =
                 caldav_read_defaultalarms(mailbox_name(mailbox),
-                        httpd_userid, CALDAV_DEFAULTALARMS_ANNOT_WITHDATE);
+                        httpd_userid, JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
 
             if (!withdate)
                 withdate = icalcomponent_new(ICAL_XROOT_COMPONENT);
@@ -6652,7 +6659,7 @@ static int propfind_sharingmodes(const xmlChar *name, xmlNsPtr ns,
     return HTTP_NOT_FOUND;
 }
 
-/* Callback to fetch CALDAV:default-alarm-vevent-date[time] property */
+/* Callback to fetch CALDAV and JMAP default alerts properties */
 static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop __attribute__((unused)),
@@ -6713,14 +6720,18 @@ static void proppatch_defaultalarm_proc(struct proppatch_ctx *ctx)
     }
 }
 
-/* Callback to write CALDAV:default-alarm-vevent-date[time] property */
+/* Callback to write CALDAV and JMAP default alarm properties */
 static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
                                   struct proppatch_ctx *pctx,
                                   struct propstat propstat[],
                                   void *rock __attribute__((unused)))
 {
+    const char *xml_ns = prop->ns ? (const char*) prop->ns->href : NULL;
+
     if (pctx->txn->req_tgt.collection ||
-                (pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource)) {
+            // only allow to proppatch CalDAV alarms on calendar home
+            ((pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource) &&
+             !strcmpsafe(XML_NS_CALDAV, xml_ns))) {
         xmlChar *freeme = NULL;
         const char *icalstr = "";
         struct buf buf = BUF_INITIALIZER;
@@ -6737,16 +6748,18 @@ static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
         if (freeme) xmlFree(freeme);
         buf_free(&buf);
 
-        /* Bump alerts after properties are processed - but just once */
-        int i;
-        for (i = 0; i < ptrarray_size(&pctx->postprocs); i++) {
-            pctx_postproc_t *proc = ptrarray_nth(&pctx->postprocs, i);
-            if (proc == (pctx_postproc_t*) proppatch_defaultalarm_proc) {
-                break;
+        if (!strcmpsafe(XML_NS_JMAPCAL, xml_ns)) {
+            /* Bump JMAP default alarm events after PROPPATCH */
+            int i;
+            for (i = 0; i < ptrarray_size(&pctx->postprocs); i++) {
+                pctx_postproc_t *proc = ptrarray_nth(&pctx->postprocs, i);
+                if (proc == (pctx_postproc_t*) proppatch_defaultalarm_proc) {
+                    break;
+                }
             }
-        }
-        if (i == ptrarray_size(&pctx->postprocs)) {
-            ptrarray_append(&pctx->postprocs, proppatch_defaultalarm_proc);
+            if (i == ptrarray_size(&pctx->postprocs)) {
+                ptrarray_append(&pctx->postprocs, proppatch_defaultalarm_proc);
+            }
         }
 
         return 0;

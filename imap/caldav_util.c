@@ -207,14 +207,16 @@ static void add_defaultalarm_etagdata(const char *mboxname,
 {
     struct message_guid withtime_guid = MESSAGE_GUID_INITIALIZER;
     caldav_read_defaultalarms_annot_value(mboxname, userid,
-            CALDAV_DEFAULTALARMS_ANNOT_WITHTIME, &withtime_guid, NULL, NULL);
+            JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
+            &withtime_guid, NULL, NULL);
     if (!message_guid_isnull(&withtime_guid)) {
         buf_appendcstr(etagdata, message_guid_encode(&withtime_guid));
     }
 
     struct message_guid withdate_guid = MESSAGE_GUID_INITIALIZER;
     caldav_read_defaultalarms_annot_value(mboxname, userid,
-            CALDAV_DEFAULTALARMS_ANNOT_WITHDATE, &withdate_guid, NULL, NULL);
+            JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
+            &withdate_guid, NULL, NULL);
     if (!message_guid_isnull(&withdate_guid)) {
         buf_appendcstr(etagdata, message_guid_encode(&withdate_guid));
     }

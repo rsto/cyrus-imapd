@@ -998,10 +998,10 @@ static time_t process_alarms(const char *mboxname, uint32_t imap_uid,
     if (icalcomponent_read_usedefaultalerts_value(ical) > 0) {
         icalcomponent *withtime =
             read_calendar_icalalarms(mboxname, userid,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHTIME);
+                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME);
         icalcomponent *withdate =
             read_calendar_icalalarms(mboxname, userid,
-                    CALDAV_DEFAULTALARMS_ANNOT_WITHDATE);
+                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
 
         if (withtime || withdate) {
             myical = icalcomponent_clone(ical);

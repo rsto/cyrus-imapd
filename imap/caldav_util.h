@@ -133,11 +133,17 @@ extern void caldav_rewrite_attachprop_to_url(struct webdav_db *webdavdb,
                                              struct buf *baseurl,
                                              struct buf *bufs);
 
-#define CALDAV_DEFAULTALARMS_ANNOT_WITHTIME \
+#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME \
     DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime"
 
-#define CALDAV_DEFAULTALARMS_ANNOT_WITHDATE \
+#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE \
     DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date"
+
+#define JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME \
+    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-with-time"
+
+#define JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME \
+    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-without-time"
 
 /* Read the default alarms for mailbox mboxname and userid as
  * icalcomponent. The VALARMs are wrapped inside
@@ -156,7 +162,8 @@ extern int caldav_read_defaultalarms_annot_value(const char *mboxname,
                                                  int *is_dlist);
 
 /* Write the default alarms in ical to annot, or delete if ical is NULL.
- * The alarms MUST be wrapped in either a XROOT or VCALENDAR component. */
+ * Both a standalone VALARM and VALARMS wrapped in a container component
+ * are supported. */
 extern int caldav_write_defaultalarms(struct mailbox *mailbox,
                                       const char *userid,
                                       const char *annot,

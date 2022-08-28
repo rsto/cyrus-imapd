@@ -12,10 +12,10 @@ sub test_calendar_get_defaultalerts
     # Set alerts via CalDAV.
     my $proppatchXml = <<EOF;
 <?xml version="1.0" encoding="UTF-8"?>
-<D:propertyupdate xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:propertyupdate xmlns:D="DAV:" xmlns:J="urn:ietf:params:jmap:calendars">
   <D:set>
     <D:prop>
-<C:default-alarm-vevent-datetime>
+<J:defaultalerts-with-time>
 BEGIN:VALARM
 UID:c5f1c439-d18d-4c98-89e1-211ccf752dec
 TRIGGER:-PT5M
@@ -28,19 +28,19 @@ TRIGGER:PT0M
 ACTION:DISPLAY
 DESCRIPTION:alarmTime2
 END:VALARM
-</C:default-alarm-vevent-datetime>
+</J:defaultalerts-with-time>
     </D:prop>
   </D:set>
   <D:set>
     <D:prop>
-<C:default-alarm-vevent-date>
+<J:defaultalerts-without-time>
 BEGIN:VALARM
 UID:bc0c8431-503e-427a-bb2d-6a1e2fca2d3f
 TRIGGER:PT0S
 ACTION:DISPLAY
 DESCRIPTION:alarmDate1
 END:VALARM
-</C:default-alarm-vevent-date>
+</J:defaultalerts-without-time>
     </D:prop>
   </D:set>
 </D:propertyupdate>
