@@ -2612,6 +2612,67 @@ static int caldav_get(struct transaction_t *txn, struct mailbox *mailbox,
     return HTTP_NO_CONTENT;
 }
 
+struct copy_defaultalerts_rock {
+    annotate_state_t *astate;
+    struct buf val;
+    struct {
+        const char *annot;
+        int did_copy;
+    } todo[2];
+    const char *ignore_mboxname;
+};
+
+static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
+{
+    struct copy_defaultalerts_rock *rock = vrock;
+
+    if (mbtype_isa(mbentry->mbtype) != MBTYPE_CALENDAR)
+        return 0;
+
+    if (!strcmpsafe(mbentry->name, rock->ignore_mboxname))
+        return 0;
+
+    mbname_t *mbname = mbname_from_intname(mbentry->name);
+    const char *collname = strarray_nth(mbname_boxes(mbname), 0);
+
+    if (!strncmp(collname, SCHED_INBOX, strlen(SCHED_INBOX)-1) ||
+        !strncmp(collname, SCHED_OUTBOX, strlen(SCHED_OUTBOX)-1) ||
+        !strncmp(collname, MANAGED_ATTACH, strlen(MANAGED_ATTACH)-1)) {
+        return 0;
+    }
+
+    for (int i = 0; i < 2; i++) {
+        if (!rock->todo[i].did_copy) {
+            const char *annot = rock->todo[i].annot;
+            buf_reset(&rock->val);
+
+            int r = annotatemore_lookupmask(mbentry->name,
+                    annot, httpd_userid, &rock->val);
+
+            if (r) {
+                xsyslog(LOG_ERR, "failed to read annotation",
+                        "mboxname=<%s> annot=<%s> err=<%s>",
+                        mbentry->name, annot, cyrusdb_strerror(r));
+            }
+
+            if (!r && buf_len(&rock->val)) {
+                r = annotate_state_writemask(rock->astate,
+                        annot, httpd_userid, &rock->val);
+                rock->todo[i].did_copy = !r;
+
+                if (r) {
+                    xsyslog(LOG_ERR, "failed to write annotation",
+                            "mboxname=<%s> annot=<%s> err=<%s>",
+                            mbentry->name, annot, cyrusdb_strerror(r));
+                }
+            }
+        }
+    }
+
+    mbname_free(&mbname);
+
+    return rock->todo[0].did_copy && rock->todo[1].did_copy;
+}
 
 /* Perform post-create MKCOL/MKCALENDAR processing */
 static int caldav_mkcol(struct mailbox *mailbox)
@@ -2645,6 +2706,45 @@ static int caldav_mkcol(struct mailbox *mailbox)
                                          httpd_userid, &attrib);
         }
     }
+
+#ifdef WITH_JMAP
+    if (types & CAL_COMP_VEVENT) {
+        // Copy default alerts to new calendar
+        annotate_state_t *astate = NULL;
+        r = mailbox_get_annotate_state(mailbox, 0, &astate);
+
+        if (!r) {
+            struct copy_defaultalerts_rock rock = {
+                .astate = astate,
+                .todo = {{
+                    .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
+                }, {
+                    .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
+                }},
+                .ignore_mboxname = mailbox_name(mailbox),
+            };
+
+            // Attempt to copy default alerts from scheduling default
+            const char *mboxname = caldav_scheddefault(httpd_userid, 0);
+            if (mboxname && strcmpsafe(mboxname, rock.ignore_mboxname)) {
+                mbentry_t *mbentry;
+                if (!mboxlist_lookup(mboxname, &mbentry, NULL)) {
+                    copy_defaultalerts_cb(mbentry, &rock);
+                }
+            }
+
+            // Otherwise copy from any calendar that has default alerts
+            if (!rock.todo[0].did_copy || !rock.todo[1].did_copy) {
+                char *calhomename = caldav_mboxname(httpd_userid, NULL);
+                mboxlist_allmbox(calhomename, copy_defaultalerts_cb,
+                        &rock, MBOXTREE_SKIP_ROOT);
+                free(calhomename);
+            }
+
+            buf_free(&rock.val);
+        }
+    }
+#endif
 
     buf_free(&attrib);
 
