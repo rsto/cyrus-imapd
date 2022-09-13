@@ -2321,20 +2321,6 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
             }
         }
 
-        /* Remove all unacknowledged VALARMs */
-        icalcomponent *nextvalarm;
-        for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
-                valarm; valarm = nextvalarm) {
-
-            nextvalarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT);
-
-            const char *uid = icalcomponent_get_uid(valarm);
-            if (!uid || strarray_find(&acknowledged_uids, uid, 0) < 0) {
-                icalcomponent_remove_component(comp, valarm);
-                icalcomponent_free(valarm);
-            }
-        }
-
         /* Add default alarms */
         if (force || icalcomponent_read_usedefaultalerts_value(comp) > 0) {
 
@@ -2355,6 +2341,20 @@ EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
             /* Ignore empty list of default alerts */
             if (!icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT))
                 break;
+
+            /* Remove all unacknowledged VALARMs */
+            icalcomponent *nextvalarm;
+            for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
+                    valarm; valarm = nextvalarm) {
+
+                nextvalarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT);
+
+                const char *uid = icalcomponent_get_uid(valarm);
+                if (!uid || strarray_find(&acknowledged_uids, uid, 0) < 0) {
+                    icalcomponent_remove_component(comp, valarm);
+                    icalcomponent_free(valarm);
+                }
+            }
 
             icalcomponent *valarm;
             for (valarm = icalcomponent_get_first_component(alerts, ICAL_VALARM_COMPONENT);
