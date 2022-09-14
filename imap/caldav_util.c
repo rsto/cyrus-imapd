@@ -206,7 +206,7 @@ static void add_defaultalarm_etagdata(const char *mboxname,
                                       struct buf *etagdata)
 {
     struct message_guid withtime_guid = MESSAGE_GUID_INITIALIZER;
-    caldav_read_defaultalarms_annot_value(mboxname, userid,
+    caldav_read_defaultalarms_annot(mboxname, userid,
             JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
             &withtime_guid, NULL, NULL);
     if (!message_guid_isnull(&withtime_guid)) {
@@ -214,7 +214,7 @@ static void add_defaultalarm_etagdata(const char *mboxname,
     }
 
     struct message_guid withdate_guid = MESSAGE_GUID_INITIALIZER;
-    caldav_read_defaultalarms_annot_value(mboxname, userid,
+    caldav_read_defaultalarms_annot(mboxname, userid,
             JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
             &withdate_guid, NULL, NULL);
     if (!message_guid_isnull(&withdate_guid)) {
@@ -1618,12 +1618,12 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
     return r;
 }
 
-HIDDEN int caldav_read_defaultalarms_annot_value(const char *mboxname,
-                                                 const char *userid,
-                                                 const char *annot,
-                                                 struct message_guid *guid,
-                                                 struct buf *content,
-                                                 int *is_dlistp)
+HIDDEN int caldav_read_defaultalarms_annot(const char *mboxname,
+                                           const char *userid,
+                                           const char *annot,
+                                           struct message_guid *guid,
+                                           struct buf *content,
+                                           int *is_dlistp)
 {
     struct buf mybuf = BUF_INITIALIZER;
     annotatemore_lookupmask(mboxname, annot, userid, &mybuf);
@@ -1679,7 +1679,7 @@ EXPORTED icalcomponent *caldav_read_defaultalarms(const char *mboxname,
     struct buf buf = BUF_INITIALIZER;
 
     /* Read alarms from mailbox */
-    caldav_read_defaultalarms_annot_value(mboxname,
+    caldav_read_defaultalarms_annot(mboxname,
             userid, annot, NULL, &buf, NULL);
 
     if (buf_len(&buf)) {

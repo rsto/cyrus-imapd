@@ -509,6 +509,29 @@ static json_t *getcalendar_defaultalerts(const char *mboxname,
     return alerts;
 }
 
+static json_t *getcalendar_debug_defaultalerts(const char *mboxname,
+                                               const char *userid,
+                                               const char *annot)
+{
+    json_t *jval = json_null();
+
+    struct buf content = BUF_INITIALIZER;
+    struct message_guid guid = MESSAGE_GUID_INITIALIZER;
+    int is_dlist = 0;
+
+    int r = caldav_read_defaultalarms_annot(mboxname, userid, annot,
+                &guid, &content, &is_dlist);
+    if (!r) {
+        jval = json_pack("{s:s s:s s:b}",
+                "guid", message_guid_encode(&guid),
+                "content", buf_cstring(&content),
+                "isDlist", json_boolean(is_dlist));
+    }
+
+    buf_free(&content);
+    return jval;
+}
+
 static json_t *calendarrights_to_jmap(int rights, int is_owner)
 {
     if (is_owner) rights |= JACL_RSVP;
@@ -771,22 +794,28 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
     }
 
     if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
+        if (jmap_wantprop(rock->get->props, "debugDefaultAlertsWithTime")) {
+            json_object_set_new(obj, "debugDefaultAlertsWithTime",
+                    getcalendar_debug_defaultalerts(mbentry->name, req->userid,
+                        JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME));
+        }
+
+        if (jmap_wantprop(rock->get->props, "debugDefaultAlertsWithoutTime")) {
+            json_object_set_new(obj, "debugDefaultAlertsWithoutTime",
+                    getcalendar_debug_defaultalerts(mbentry->name, req->userid,
+                        JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME));
+        }
+
         if (jmap_wantprop(rock->get->props, "caldavDefaultAlarmDateTime")) {
-            static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME;
-            buf_reset(&attrib);
-            caldav_read_defaultalarms_annot_value(mbentry->name, req->userid,
-                    annot, NULL, &attrib, NULL);
             json_object_set_new(obj, "caldavDefaultAlarmDateTime",
-                    buf_len(&attrib) ? json_string(buf_cstring(&attrib)) : json_null());
+                    getcalendar_debug_defaultalerts(mbentry->name, req->userid,
+                        CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME));
         }
 
         if (jmap_wantprop(rock->get->props, "caldavDefaultAlarmDate")) {
-            static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE;
-            buf_reset(&attrib);
-            caldav_read_defaultalarms_annot_value(mbentry->name, req->userid,
-                    annot, NULL, &attrib, NULL);
             json_object_set_new(obj, "caldavDefaultAlarmDate",
-                    buf_len(&attrib) ? json_string(buf_cstring(&attrib)) : json_null());
+                    getcalendar_debug_defaultalerts(mbentry->name, req->userid,
+                        CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE));
         }
     }
 
@@ -959,6 +988,16 @@ static const jmap_property_t calendar_props[] = {
     },
     {
         "caldavDefaultAlarmDate",
+        JMAP_DEBUG_EXTENSION,
+        0
+    },
+    {
+        "debugDefaultAlertsWithTime",
+        JMAP_DEBUG_EXTENSION,
+        0
+    },
+    {
+        "debugDefaultAlertsWithoutTime",
         JMAP_DEBUG_EXTENSION,
         0
     },
@@ -1195,8 +1234,6 @@ struct setcalendar_props {
     long comp_types;
     ptrarray_t *defaultalerts_with_time; // list of VALARM icalcomponent*
     ptrarray_t *defaultalerts_without_time; // list of VALARM icalcomponent*
-    json_t *caldav_defaultalarm_datetime;
-    json_t *caldav_defaultalarm_date;
 };
 
 static void free_defaultalerts(ptrarray_t **defaultalertsp)
@@ -1218,8 +1255,6 @@ static void setcalendar_props_fini(struct setcalendar_props *props)
 {
     free_defaultalerts(&props->defaultalerts_with_time);
     free_defaultalerts(&props->defaultalerts_without_time);
-    json_decref(props->caldav_defaultalarm_datetime);
-    json_decref(props->caldav_defaultalarm_date);
 }
 
 static void setcalendar_parsealerts(struct jmap_parser *parser,
@@ -1598,23 +1633,13 @@ static void setcalendar_parseprops(jmap_req_t *req,
             JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
             &props->defaultalerts_without_time);
 
-    if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
-        jprop = json_object_get(arg, "caldavDefaultAlarmDateTime");
-        if (json_is_string(jprop) || JNULL(jprop)) {
-            props->caldav_defaultalarm_datetime = json_incref(jprop);
-        }
-        else {
-            jmap_parser_invalid(parser, "caldavDefaultAlarmDateTime");
-        }
+    // TODO(rsto): these shouldn't get special handling,
+    // Calendar/set should just reject any unknown property
+    if (json_object_get(arg, "caldavDefaultAlarmDate"))
+        jmap_parser_invalid(parser, "caldavDefaultAlarmDate");
 
-        jprop = json_object_get(arg, "caldavDefaultAlarmDate");
-        if (json_is_string(jprop) || JNULL(jprop)) {
-            props->caldav_defaultalarm_date = json_incref(jprop);
-        }
-        else {
-            jmap_parser_invalid(parser, "caldavDefaultAlarmDate");
-        }
-    }
+    if (json_object_get(arg, "caldavDefaultAlarmDateTime"))
+        jmap_parser_invalid(parser, "caldavDefaultAlarmDateTime");
 }
 
 /* Write  the calendar properties in the calendar mailbox named mboxname.
@@ -1836,38 +1861,6 @@ static int setcalendar_writeprops(jmap_req_t *req,
                         mailbox_name(mbox), error_message(r));
             }
         }
-    }
-
-    /* caldavDefaultAlarmDateTime */
-    if (!r && props->caldav_defaultalarm_datetime) {
-        static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME;
-        buf_reset(&val);
-        if (json_is_string(props->caldav_defaultalarm_datetime)) {
-            caldav_format_defaultalarms_annot(&val,
-                    json_string_value(props->caldav_defaultalarm_datetime));
-        }
-        r = annotate_state_writemask(astate, annot, req->userid, &val);
-        if (r) {
-            syslog(LOG_ERR, "failed to write annotation %s: %s",
-                    annot, error_message(r));
-        }
-    }
-
-    /* caldavDefaultAlarmDate */
-    if (!r && props->caldav_defaultalarm_date) {
-        static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE;
-        buf_reset(&val);
-        if (json_is_string(props->caldav_defaultalarm_date)) {
-            caldav_format_defaultalarms_annot(&val,
-                    json_string_value(props->caldav_defaultalarm_date));
-        }
-
-        r = annotate_state_writemask(astate, annot, req->userid, &val);
-        if (r) {
-            syslog(LOG_ERR, "failed to write annotation %s: %s",
-                    annot, error_message(r));
-        }
-        buf_reset(&val);
     }
 
     buf_free(&val);
@@ -11466,21 +11459,15 @@ static int jmap_calendarpreferences_get(struct jmap_req *req)
 
         if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
             if (jmap_wantprop(get.props, "caldavDefaultAlarmDateTime")) {
-                static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME;
-                buf_reset(&buf);
-                caldav_read_defaultalarms_annot_value(calhomename, req->userid,
-                        annot, NULL, &buf, NULL);
                 json_object_set_new(jprefs, "caldavDefaultAlarmDateTime",
-                        buf_len(&buf) ? json_string(buf_cstring(&buf)) : json_null());
+                        getcalendar_debug_defaultalerts(calhomename, req->userid,
+                            CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME));
             }
 
             if (jmap_wantprop(get.props, "caldavDefaultAlarmDate")) {
-                static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE;
-                buf_reset(&buf);
-                caldav_read_defaultalarms_annot_value(calhomename, req->userid,
-                        annot, NULL, &buf, NULL);
                 json_object_set_new(jprefs, "caldavDefaultAlarmDate",
-                        buf_len(&buf) ? json_string(buf_cstring(&buf)) : json_null());
+                        getcalendar_debug_defaultalerts(calhomename, req->userid,
+                            CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE));
             }
         }
 
@@ -11514,8 +11501,6 @@ static void calendarpreferences_set(struct jmap_req *req,
 
     struct mailbox *calhomembox = NULL;
     annotate_state_t *astate = NULL;
-    json_t *caldav_defaultalarm_datetime = NULL;
-    json_t *caldav_defaultalarm_date = NULL;
 
     /* Validate properties */
 
@@ -11542,24 +11527,6 @@ static void calendarpreferences_set(struct jmap_req *req,
             }
             else {
                 jmap_parser_invalid(parser, "defaultParticipantIdentityId");
-            }
-        }
-        else if (!strcmp(prop, "caldavDefaultAlarmDateTime") &&
-                jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
-            if (json_is_string(jval) || JNULL(jval)) {
-                caldav_defaultalarm_datetime = json_incref(jval);
-            }
-            else {
-                jmap_parser_invalid(parser, prop);
-            }
-        }
-        else if (!strcmp(prop, "caldavDefaultAlarmDate") &&
-                jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
-            if (json_is_string(jval) || JNULL(jval)) {
-                caldav_defaultalarm_date = json_incref(jval);
-            }
-            else {
-                jmap_parser_invalid(parser, prop);
             }
         }
         else {
@@ -11664,40 +11631,10 @@ static void calendarpreferences_set(struct jmap_req *req,
         }
     }
 
-    /* caldavDefaultAlarmDateTime */
-    if (!r && caldav_defaultalarm_datetime) {
-        static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME;
-        buf_reset(&buf);
-        if (json_is_string(caldav_defaultalarm_datetime))
-            buf_setcstr(&buf, json_string_value(caldav_defaultalarm_datetime));
-
-        r = annotate_state_writemask(astate, annot, req->userid, &buf);
-        if (r) {
-            syslog(LOG_ERR, "failed to write annotation %s: %s",
-                    annot, error_message(r));
-        }
-    }
-
-    /* caldavDefaultAlarmDate */
-    if (!r && caldav_defaultalarm_date) {
-        static const char *annot = CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE;
-        buf_reset(&buf);
-        if (json_is_string(caldav_defaultalarm_date))
-            buf_setcstr(&buf, json_string_value(caldav_defaultalarm_date));
-
-        r = annotate_state_writemask(astate, annot, req->userid, &buf);
-        if (r) {
-            syslog(LOG_ERR, "failed to write annotation %s: %s",
-                    annot, error_message(r));
-        }
-    }
-
 done:
     if (r && *err == NULL) {
         *err = jmap_server_error(r);
     }
-    json_decref(caldav_defaultalarm_datetime);
-    json_decref(caldav_defaultalarm_date);
     jmap_closembox(req, &calhomembox);
     buf_free(&buf);
 }

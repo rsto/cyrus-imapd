@@ -154,12 +154,12 @@ extern icalcomponent *caldav_read_defaultalarms(const char *mboxname,
 
 /* Read the annotation value and parse it into is constituent parts.
  * Each of the output arguments guid, content and is_dlist are nullable. */
-extern int caldav_read_defaultalarms_annot_value(const char *mboxname,
-                                                 const char *userid,
-                                                 const char *annot,
-                                                 struct message_guid *guid,
-                                                 struct buf *content,
-                                                 int *is_dlist);
+extern int caldav_read_defaultalarms_annot(const char *mboxname,
+                                           const char *userid,
+                                           const char *annot,
+                                           struct message_guid *guid,
+                                           struct buf *content,
+                                           int *is_dlist);
 
 /* Write the default alarms in ical to annot, or delete if ical is NULL.
  * Both a standalone VALARM and VALARMS wrapped in a container component

@@ -77,12 +77,21 @@ EOF
             ],
         }, 'R1'],
     ], $using);
+    $self->assert_not_null(
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDateTime}{guid});
     $self->assert_str_equals($valarmDateTime,
-        $res->[0][1]{list}[0]{caldavDefaultAlarmDateTime});
-    $self->assert_str_equals($valarmDate,
-        $res->[0][1]{list}[0]{caldavDefaultAlarmDate});
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDateTime}{content});
+    $self->assert_equals(JSON::true,
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDateTime}{isDlist});
 
-    xlog $self, "Update CalDAV default alarms for $objectType $objectId";
+    $self->assert_not_null(
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDate}{guid});
+    $self->assert_str_equals($valarmDate,
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDate}{content});
+    $self->assert_equals(JSON::true,
+        $res->[0][1]{list}[0]{caldavDefaultAlarmDate}{isDlist});
+
+    xlog $self, "Can not update CalDAV default alarms for $objectType $objectId";
 
     $valarmDateTime = <<EOF;
 BEGIN:VALARM
@@ -111,66 +120,12 @@ EOF
             },
         }, 'R1'],
     ], $using);
-    $self->assert(exists $res->[0][1]{updated}{$objectId});
+    $self->assert_str_equals('invalidProperties',
+        $res->[0][1]{notUpdated}{$objectId}{type});
 
-    xlog $self, "PROPFIND for CalDAV default alarms on $davUrl";
-    my $propfindXml = <<EOF;
-<?xml version="1.0" encoding="UTF-8"?>
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:prop>
-     <C:default-alarm-vevent-datetime/>
-     <C:default-alarm-vevent-date/>
-  </D:prop>
-</D:propfind>
-EOF
-    $res = $caldav->Request('PROPFIND', $davUrl,
-        $propfindXml, 'Content-Type' => 'text/xml');
-
-    xlog $self, "Assert default alarms got replaced";
-    my $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
-    my $valarm = $ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'}{content};
-    $self->assert_str_equals($valarmDateTime, $valarm);
-
-    my $valarm = $ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-date'}{content};
-    $self->assert_str_equals($valarmDate, $valarm);
-
-    xlog $self, "Remove CalDAV default alarms for $objectType $objectId";
-    $res = $jmap->CallMethods([
-        ["$objectType/set", {
-            update => {
-                $objectId => {
-                    caldavDefaultAlarmDateTime => undef,
-                    caldavDefaultAlarmDate => undef,
-                },
-            },
-        }, 'R1'],
-        ["$objectType/get", {
-            properties => [
-                'caldavDefaultAlarmDateTime',
-                'caldavDefaultAlarmDate',
-            ],
-        }, 'R2'],
-    ], $using);
-    $self->assert(exists $res->[0][1]{updated}{$objectId});
-    $self->assert_null($res->[1][1]{list}[0]{caldavDefaultAlarmDateTime});
-    $self->assert_null($res->[1][1]{list}[0]{caldavDefaultAlarmDate});
-
-    xlog $self, "PROPFIND for CalDAV default alarms on $davUrl";
-    $res = $caldav->Request('PROPFIND', $davUrl,
-        $propfindXml, 'Content-Type' => 'text/xml');
-
-    xlog "Assert DAV properties are gone";
-    my $ps = $res->{'{DAV:}response'}[0]{'{DAV:}propstat'}[0];
-    $self->assert_not_null($ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-datetime'});
-    $self->assert_not_null($ps->{'{DAV:}prop'}{
-        '{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-date'});
-    $self->assert_str_equals('HTTP/1.1 404 Not Found', $ps->{'{DAV:}status'}{content});
 }
 
-sub test_debug_set_caldav_defaultalarms
+sub test_debug_defaultalerts_get_caldav
     :min_version_3_7 :needs_component_jmap
 {
     my ($self) = @_;
