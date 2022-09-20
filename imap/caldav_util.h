@@ -161,14 +161,6 @@ extern int caldav_read_defaultalarms_annot(const char *mboxname,
                                            struct buf *content,
                                            int *is_dlist);
 
-/* Write the default alarms in ical to annot, or delete if ical is NULL.
- * Both a standalone VALARM and VALARMS wrapped in a container component
- * are supported. */
-extern int caldav_write_defaultalarms(struct mailbox *mailbox,
-                                      const char *userid,
-                                      const char *annot,
-                                      icalcomponent *ical);
-
 /* Bump the modseq of all records in mailbox that contain iCalendar
  * components with enabled default alarms. Also forces calalarmd to
  * recalculate the alarms for these records.
@@ -188,5 +180,9 @@ extern int caldav_usedefaultalerts(struct dlist *dl,
 extern icaltimezone *caldav_get_calendar_tz(const char *mboxname, const char *userid);
 
 extern int caldav_is_secretarymode(const char *mboxname);
+
+#ifdef WITH_JMAP
+extern int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox);
+#endif
 
 #endif /* HTTP_CALDAV_H */

@@ -1368,27 +1368,50 @@ static void parse_defaultalert_arg(jmap_req_t *req,
 static int write_defaultalerts(jmap_req_t *req, struct mailbox *mbox,
                                ptrarray_t *alarms, const char *annot)
 {
-    int r = 0;
+    if (!alarms) return 0;
 
-    if (alarms) {
+    struct buf val = BUF_INITIALIZER;
+    struct buf raw = BUF_INITIALIZER;
+
+    if (ptrarray_size(alarms)) {
         /* Wrap alarms with XROOT component */
         icalcomponent *ical = icalcomponent_new(ICAL_XROOT_COMPONENT);
         int i;
         for (i = 0; i < ptrarray_size(alarms); i++) {
             icalcomponent *valarm = ptrarray_nth(alarms, i);
-            icalcomponent_add_component(ical, valarm);
+            icalcomponent_add_component(ical,
+                    icalcomponent_clone(valarm));
         }
-        /* XROOT component takes ownership of alarms */
-        ptrarray_fini(alarms);
-        /* Write alarms */
-        r = caldav_write_defaultalarms(mbox, req->userid, annot, ical);
-        if (r) {
-            syslog(LOG_ERR, "failed to write annotation %s: %s",
-                    annot, error_message(r));
-        }
+        buf_setcstr(&raw, icalcomponent_as_ical_string(ical));
         icalcomponent_free(ical);
     }
 
+    // We always write the default alarms annotations, even in the
+    // absence of any default alarms. This allows us to determine
+    // if the user has their alarms already migrated from CalDAV
+    // default alarms to JMAP default alarms.
+
+    caldav_format_defaultalarms_annot(&val, buf_cstring(&raw));
+
+    annotate_state_t *astate;
+    int r = mailbox_get_annotate_state(mbox, 0, &astate);
+    if (r) {
+        xsyslog(LOG_ERR, "failed to get annotation state",
+                "mboxname=<%s> err=<%s>",
+                mailbox_name(mbox), error_message(r));
+        goto done;
+    }
+
+    r = annotate_state_writemask(astate, annot, req->userid, &val);
+    if (r) {
+        xsyslog(LOG_ERR, "failed to write annotation",
+                "annot=<%s> err=<%s>", annot, error_message(r));
+        goto done;
+    }
+
+done:
+    buf_free(&raw);
+    buf_free(&val);
     return r;
 }
 
@@ -1645,24 +1668,12 @@ static void setcalendar_parseprops(jmap_req_t *req,
 /* Write  the calendar properties in the calendar mailbox named mboxname.
  * NULL values and negative integers are ignored. Return 0 on success. */
 static int setcalendar_writeprops(jmap_req_t *req,
-                               const char *mboxname,
-                               struct setcalendar_props *props,
-                               int ignore_acl)
+                                  struct mailbox *mbox,
+                                  struct setcalendar_props *props)
 {
-    struct mailbox *mbox = NULL;
     annotate_state_t *astate = NULL;
     struct buf val = BUF_INITIALIZER;
     int r;
-
-    if (!jmap_hasrights(req, mboxname, JACL_READITEMS) && !ignore_acl)
-        return IMAP_MAILBOX_NONEXISTENT;
-
-    r = jmap_openmbox(req, mboxname, &mbox, 1);
-    if (r) {
-        syslog(LOG_ERR, "jmap_openmbox(req, %s) failed: %s",
-                mboxname, error_message(r));
-        return r;
-    }
 
     r = mailbox_get_annotate_state(mbox, 0, &astate);
     if (r) {
@@ -1770,7 +1781,7 @@ static int setcalendar_writeprops(jmap_req_t *req,
     /* isSubscribed */
     if (!r && props->isSubscribed >= 0) {
         /* Update subscription database */
-        r = mboxlist_changesub(mboxname, req->userid, req->authstate,
+        r = mboxlist_changesub(mailbox_name(mbox), req->userid, req->authstate,
                                props->isSubscribed, 0, /*notify*/1);
 
         /* Set invite status for CalDAV */
@@ -1864,10 +1875,6 @@ static int setcalendar_writeprops(jmap_req_t *req,
     }
 
     buf_free(&val);
-    if (mbox) {
-        if (r) mailbox_abort(mbox);
-        jmap_closembox(req, &mbox);
-    }
     return r;
 }
 
@@ -2100,10 +2107,11 @@ static void setcalendars_create(struct jmap_req *req,
 {
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
     struct setcalendar_props props;
-    mbentry_t *mbparent = NULL;
+    mbentry_t *mbparent = NULL, *mbentry = NULL;
     char *parentname = caldav_mboxname(req->accountid, NULL);
     char *uid = xstrdup(makeuuid());
     char *mboxname = caldav_mboxname(req->accountid, uid);
+    struct mailbox *mbox = NULL;
     int r = 0;
 
     /* Parse and validate properties. */
@@ -2137,21 +2145,45 @@ static void setcalendars_create(struct jmap_req *req,
         free(acl);
         goto done;
     }
-    mbentry_t mbentry = MBENTRY_INITIALIZER;
-    mbentry.name = mboxname;
-    mbentry.acl = acl;
-    mbentry.mbtype = MBTYPE_CALENDAR;
-    r = mboxlist_createmailbox(&mbentry, 0/*options*/, 0/*highestmodseq*/,
+    mbentry_t mymbentry = MBENTRY_INITIALIZER;
+    mymbentry.name = mboxname;
+    mymbentry.acl = acl;
+    mymbentry.mbtype = MBTYPE_CALENDAR;
+    r = mboxlist_createmailbox(&mymbentry, 0/*options*/, 0/*highestmodseq*/,
             0/*isadmin*/, req->userid, req->authstate,
-            0/*flags*/, NULL/*mailboxptr*/);
+            0/*flags*/, &mbox);
     free(acl);
     if (r) {
         syslog(LOG_ERR, "IOERROR: failed to create %s (%s)",
                 mboxname, error_message(r));
         goto done;
     }
-    r = setcalendar_writeprops(req, mboxname, &props, /*ignore_acl*/1);
+
+    // Initialize JMAP calendar
+    r = caldav_init_jmapcalendar(req->userid, mbox);
     if (r) {
+        xsyslog(LOG_ERR, "jmap_init_calendar_mailbox failed",
+                "mboxname=<%s> err=<%s>",
+                mboxname, error_message(r));
+        goto done;
+    }
+
+    // Reset JMAP mboxlist cache for the new mailbox
+    r = jmap_mboxlist_lookup(mboxname, &mbentry, NULL);
+    if (r) {
+        xsyslog(LOG_ERR, "jmap_mboxlist_lookup failed",
+                "mboxname=<%s> err=<%s>",
+                mboxname, error_message(r));
+        goto done;
+    }
+
+    r = setcalendar_writeprops(req, mbox, &props);
+    if (r) {
+        xsyslog(LOG_ERR, "setcalendar_writeprops failed",
+                "mboxname=<%s> err=<%s>",
+                mboxname, error_message(r));
+        mailbox_abort(mbox);
+        jmap_closembox(req, &mbox);
         int rr = mboxlist_deletemailbox(mboxname, 1, "", NULL, NULL, 0);
         if (rr) {
             syslog(LOG_ERR, "could not delete mailbox %s: %s",
@@ -2163,7 +2195,7 @@ static void setcalendars_create(struct jmap_req *req,
     /* Report calendar as created. */
     *record = json_pack("{s:s s:o}", "id", uid,
                         "myRights",
-                        calendarrights_to_jmap(jmap_myrights_mbentry(req, &mbentry),
+                        calendarrights_to_jmap(jmap_myrights_mbentry(req, mbentry),
                                                !strcmp(req->userid, req->accountid)));
     jmap_add_id(req, creation_id, uid);
 
@@ -2177,7 +2209,9 @@ done:
                 *err = jmap_server_error(r);
         }
     }
+    mailbox_close(&mbox);
     mboxlist_entry_free(&mbparent);
+    mboxlist_entry_free(&mbentry);
     setcalendar_props_fini(&props);
     jmap_parser_fini(&parser);
     free(parentname);
@@ -2194,6 +2228,7 @@ static void setcalendars_update(jmap_req_t *req,
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
     char *mboxname = caldav_mboxname(req->accountid, uid);
     mbname_t *mbname = mbname_from_intname(mboxname);
+    struct mailbox *mbox = NULL;
 
     /* Make sure we don't mess up special calendars */
     if (jmap_calendar_isspecial(mbname)) {
@@ -2216,8 +2251,23 @@ static void setcalendars_update(jmap_req_t *req,
         goto done;
     }
 
+    if (!jmap_hasrights(req, mboxname, JACL_READITEMS)) {
+        *err = json_pack("{s:s}", "type", "notFound");
+        goto done;
+    }
+
     /* Update the calendar */
-    int r = setcalendar_writeprops(req, mboxname, &props, /*ignore_acl*/0);
+    int r = jmap_openmbox(req, mboxname, &mbox, /*rw*/1);
+    if (!r) {
+        r = setcalendar_writeprops(req, mbox, &props);
+        if (r) {
+            xsyslog(LOG_ERR, "setcalendar_writeprops failed",
+                    "mboxname=<%s> err=<%s>",
+                    mboxname, error_message(r));
+            mailbox_abort(mbox);
+            jmap_closembox(req, &mbox);
+        }
+    }
     if (r) {
         switch (r) {
             case IMAP_MAILBOX_NONEXISTENT:
@@ -2238,6 +2288,7 @@ static void setcalendars_update(jmap_req_t *req,
 
 done:
     setcalendar_props_fini(&props);
+    jmap_closembox(req, &mbox);
     jmap_parser_fini(&parser);
     mbname_free(&mbname);
     free(mboxname);

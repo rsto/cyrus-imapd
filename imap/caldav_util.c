@@ -51,6 +51,7 @@
 #include "caldav_db.h"
 #include "caldav_util.h"
 #include "http_dav.h"
+#include "itip_support.h"
 #include "jmap_ical.h"
 #include "mailbox.h"
 #include "proxy.h"
@@ -1441,6 +1442,7 @@ static int _create_mailbox(const char *userid, const char *mailboxname,
                            int useracl, int anyoneacl, const char *displayname,
                            const struct namespace *namespace,
                            const struct auth_state *authstate,
+                           int is_jmapcalendar,
                            struct mboxlock **namespacelockp)
 {
     char rights[100];
@@ -1481,6 +1483,12 @@ static int _create_mailbox(const char *userid, const char *mailboxname,
                 r = annotate_state_writemask(astate, comp_annot, userid, &value);
             }
             buf_free(&value);
+
+            if (is_jmapcalendar) {
+#ifdef WITH_JMAP
+                caldav_init_jmapcalendar(userid, mailbox);
+#endif
+            }
         }
 
         mailbox_close(&mailbox);
@@ -1557,7 +1565,7 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
             else {
                 r = _create_mailbox(userid, mailboxname, MBTYPE_CALENDAR, 0,
                                     ACL_ALL | DACL_READFB, DACL_READFB, NULL,
-                                    namespace, authstate, &namespacelock);
+                                    namespace, authstate, 0, &namespacelock);
             }
         }
         else if (r == IMAP_MAILBOX_NONEXISTENT) {
@@ -1578,7 +1586,7 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
         r = _create_mailbox(userid, mailboxname, MBTYPE_CALENDAR, comp_types,
                             ACL_ALL | DACL_READFB, DACL_READFB,
                             config_getstring(IMAPOPT_CALENDAR_DEFAULT_DISPLAYNAME),
-                            namespace, authstate, &namespacelock);
+                            namespace, authstate, 1, &namespacelock);
         free(mailboxname);
         if (r) goto done;
     }
@@ -1589,7 +1597,7 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
         mailboxname = caldav_mboxname(userid, SCHED_INBOX);
         r = _create_mailbox(userid, mailboxname, MBTYPE_CALENDAR, 0,
                             ACL_ALL | DACL_SCHED, DACL_SCHED, NULL,
-                            namespace, authstate, &namespacelock);
+                            namespace, authstate, 0, &namespacelock);
         free(mailboxname);
         if (r) goto done;
 
@@ -1597,7 +1605,7 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
         mailboxname = caldav_mboxname(userid, SCHED_OUTBOX);
         r = _create_mailbox(userid, mailboxname, MBTYPE_CALENDAR, 0,
                             ACL_ALL | DACL_SCHED, 0, NULL,
-                            namespace, authstate, &namespacelock);
+                            namespace, authstate, 0, &namespacelock);
         free(mailboxname);
         if (r) goto done;
     }
@@ -1608,7 +1616,7 @@ EXPORTED int caldav_create_defaultcalendars(const char *userid,
         mailboxname = caldav_mboxname(userid, MANAGED_ATTACH);
         r = _create_mailbox(userid, mailboxname, MBTYPE_COLLECTION, 0,
                             ACL_ALL, ACL_READ, NULL,
-                            namespace, authstate, &namespacelock);
+                            namespace, authstate, 0, &namespacelock);
         free(mailboxname);
         if (r) goto done;
     }
@@ -1702,49 +1710,17 @@ EXPORTED void caldav_format_defaultalarms_annot(struct buf *dst, const char *ica
 {
     struct dlist *dl = dlist_newkvlist(NULL, "DEFAULTALARMS");
     struct message_guid guid;
-    message_guid_generate(&guid, icalstr, strlen(icalstr));
+    if (*icalstr) {
+        message_guid_generate(&guid, icalstr, strlen(icalstr));
+    }
+    else {
+        message_guid_set_null(&guid);
+    }
     dlist_setatom(dl, "CONTENT", icalstr);
     dlist_setatom(dl, "GUID", message_guid_encode(&guid));
     dlist_printbuf(dl, 1, dst);
     dlist_free(&dl);
 }
-
-
-EXPORTED int caldav_write_defaultalarms(struct mailbox *mailbox,
-                                        const char *userid,
-                                        const char *annot,
-                                        icalcomponent *ical)
-{
-    annotate_state_t *astate;
-    int r = mailbox_get_annotate_state(mailbox, 0, &astate);
-    if (r) return r;
-
-    struct buf val = BUF_INITIALIZER;
-    if (ical) {
-        struct buf raw = BUF_INITIALIZER;
-
-        if (icalcomponent_isa(ical) != ICAL_VALARM_COMPONENT) {
-            icalcomponent *comp;
-            for (comp = icalcomponent_get_first_component(ical, ICAL_VALARM_COMPONENT);
-                 comp;
-                 comp = icalcomponent_get_next_component(ical, ICAL_VALARM_COMPONENT)) {
-                buf_appendcstr(&raw, icalcomponent_as_ical_string(comp));
-            }
-        }
-        else buf_setcstr(&raw, icalcomponent_as_ical_string(ical));
-
-        if (buf_len(&raw)) {
-            caldav_format_defaultalarms_annot(&val, buf_cstring(&raw));
-            buf_free(&raw);
-        }
-    }
-
-    r = annotate_state_writemask(astate, annot, userid, &val);
-    buf_free(&val);
-
-    return r;
-}
-
 
 struct bumpdefaultalarms_data {
     bitvector_t bump;
@@ -1949,3 +1925,153 @@ HIDDEN void caldav_attachment_url(struct buf *buf,
             USER_COLLECTION_PREFIX,
             userid, MANAGED_ATTACH, managedid);
 }
+
+#ifdef WITH_JMAP
+
+struct copy_defaultalerts_rock {
+    annotate_state_t *astate;
+    struct buf buf[2];
+    struct {
+        const char *annot;
+        int did_copy;
+    } todo[2];
+    const char *ignore_mboxname;
+    const char *userid;
+};
+
+static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
+{
+    struct copy_defaultalerts_rock *rock = vrock;
+    int r = 0;
+
+    if (mbtype_isa(mbentry->mbtype) != MBTYPE_CALENDAR)
+        return 0;
+
+    if (!strcmpsafe(mbentry->name, rock->ignore_mboxname))
+        return 0;
+
+    mbname_t *mbname = mbname_from_intname(mbentry->name);
+    const char *collname = strarray_nth(mbname_boxes(mbname), 0);
+
+    if (!strncmp(collname, SCHED_INBOX, strlen(SCHED_INBOX)-1) ||
+        !strncmp(collname, SCHED_OUTBOX, strlen(SCHED_OUTBOX)-1) ||
+        !strncmp(collname, MANAGED_ATTACH, strlen(MANAGED_ATTACH)-1)) {
+        return 0;
+    }
+
+    for (int i = 0; i < 2; i++) {
+        if (!rock->todo[i].did_copy) {
+            const char *annot = rock->todo[i].annot;
+            struct buf *icalbuf = &rock->buf[0];
+            buf_reset(icalbuf);
+            struct buf *annotval = &rock->buf[1];
+            buf_reset(annotval);
+
+            r = caldav_read_defaultalarms_annot(mbentry->name,
+                    rock->userid, annot, NULL, icalbuf, NULL);
+
+            if (r && r != CYRUSDB_NOTFOUND) {
+                xsyslog(LOG_WARNING, "failed to read annotation",
+                        "mboxname=<%s> annot=<%s> err=<%s>",
+                        mbentry->name, annot, cyrusdb_strerror(r));
+                r = 0;
+                continue; // ignore
+            }
+
+            if (buf_len(icalbuf)) {
+                caldav_format_defaultalarms_annot(annotval,
+                        buf_cstring(icalbuf));
+
+                r = annotate_state_writemask(rock->astate,
+                        annot, rock->userid, annotval);
+                rock->todo[i].did_copy = !r;
+
+                if (r) {
+                    xsyslog(LOG_ERR, "failed to write annotation",
+                            "mboxname=<%s> annot=<%s> err=<%s>",
+                            mbentry->name, annot, cyrusdb_strerror(r));
+                    break;
+                }
+            }
+        }
+    }
+
+    mbname_free(&mbname);
+
+    if (!r && rock->todo[0].did_copy && rock->todo[1].did_copy)
+        r = CYRUSDB_DONE;
+
+    return r;
+}
+
+HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
+{
+    // Copy default alerts to new calendar
+    annotate_state_t *astate = NULL;
+    int r = mailbox_get_annotate_state(mailbox, 0, &astate);
+    if (r) return r;
+
+    struct copy_defaultalerts_rock rock = {
+        .astate = astate,
+        .todo = {{
+            .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
+        }, {
+            .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
+        }},
+        .ignore_mboxname = mailbox_name(mailbox),
+        .userid = userid,
+    };
+
+    // Attempt to copy default alerts from scheduling default
+    const char *mboxname = caldav_scheddefault(userid, 0);
+    if (mboxname && strcmpsafe(mboxname, rock.ignore_mboxname)) {
+        mbentry_t *mbentry;
+        if (!mboxlist_lookup(mboxname, &mbentry, NULL)) {
+            r = copy_defaultalerts_cb(mbentry, &rock);
+        }
+    }
+
+    if (!r) {
+        // Otherwise copy from any calendar that has default alerts
+        if (!rock.todo[0].did_copy || !rock.todo[1].did_copy) {
+            char *calhomename = caldav_mboxname(userid, NULL);
+            r = mboxlist_allmbox(calhomename, copy_defaultalerts_cb,
+                    &rock, MBOXTREE_SKIP_ROOT);
+            free(calhomename);
+        }
+    }
+
+    // If there are no default alerts, initialize the annotation
+    // to zero. This allows to identify if a user never got their
+    // default alerts migrated from CalDAV to JMAP.
+    for (int i = 0; i < 2; i++) {
+        if (!rock.todo[i].did_copy) {
+            const char *annot = rock.todo[i].annot;
+            struct buf *annotval = &rock.buf[0];
+            buf_reset(annotval);
+
+            caldav_format_defaultalarms_annot(annotval, "");
+
+            r = annotate_state_writemask(rock.astate,
+                    annot, userid,annotval);
+
+            rock.todo[i].did_copy = !r;
+
+            if (r) {
+                xsyslog(LOG_WARNING, "failed to write annotation",
+                        "mboxname=<%s> annot=<%s> err=<%s>",
+                        mailbox_name(mailbox), annot, cyrusdb_strerror(r));
+                r = 0;
+            }
+        }
+    }
+
+    if (r == CYRUSDB_DONE)
+        r = 0;
+
+    buf_free(&rock.buf[0]);
+    buf_free(&rock.buf[1]);
+    return r;
+}
+
+#endif
