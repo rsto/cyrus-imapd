@@ -72,10 +72,6 @@ sub test_caldavalarm_update_defaultalerts
     my $calendarId = $caldav->NewCalendar({name => 'foo'});
     $self->assert_not_null($calendarId);
 
-    # Set defaultalerts to trigger at start of event
-    my $defaultAlertsWithTime = {
-    };
-
     my $res = $jmap->CallMethods([
         ['Calendar/set', {
             create => {
