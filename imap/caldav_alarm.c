@@ -958,7 +958,7 @@ static icalcomponent *read_calendar_icalalarms(const char *mboxname,
     icalcomponent *ical = NULL;
     struct buf buf = BUF_INITIALIZER;
 
-    annotatemore_lookupmask(mboxname, annot, userid, &buf);
+    annotatemore_lookup(mboxname, annot, userid, &buf);
 
     if (buf_len(&buf)) {
         struct dlist *dl = NULL;

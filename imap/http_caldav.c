@@ -6694,9 +6694,8 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
                (const char *) ns->href, name);
 
     if (fctx->mbentry && !fctx->record) {
-        r = annotatemore_lookupmask(fctx->mbentry->name,
-                                    buf_cstring(&fctx->buf),
-                                    httpd_userid, &attrib);
+        r = annotatemore_lookup(fctx->mbentry->name,
+                buf_cstring(&fctx->buf), httpd_userid, &attrib);
     }
 
     if (r) return HTTP_SERVER_ERROR;
@@ -6758,27 +6757,42 @@ static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
             (pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource)) {
         xmlChar *freeme = NULL;
         const char *icalstr = "";
-        struct buf buf = BUF_INITIALIZER;
+        struct buf value = BUF_INITIALIZER;
 
         if (set) {
             freeme = xmlNodeGetContent(prop);
             icalstr = (const char *) freeme;
-            caldav_format_defaultalarms_annot(&buf, icalstr);
+            caldav_format_defaultalarms_annot(&value, icalstr);
         }
 
-        proppatch_todb(prop, set, pctx, propstat,
-                buf_len(&buf) ? (void*) buf_cstring(&buf) : NULL);
+        buf_reset(&pctx->buf);
+        buf_printf(&pctx->buf, DAV_ANNOT_NS "<%s>%s",
+                (const char *) prop->ns->href, prop->name);
+
+        annotate_state_t *astate = NULL;
+        int r = mailbox_get_annotate_state(pctx->mailbox, 0, &astate);
+
+        if (!r) r = annotate_state_write(astate, buf_cstring(&pctx->buf),
+                httpd_userid, &value);
+
+        if (!r) {
+            xml_add_prop(HTTP_OK, pctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
+                    prop->name, prop->ns, NULL, 0);
+        }
+        else {
+            xml_add_prop(HTTP_SERVER_ERROR, pctx->ns[NS_DAV],
+                    &propstat[PROPSTAT_ERROR], prop->name, prop->ns, NULL, 0);
+        }
 
         if (freeme) xmlFree(freeme);
-        buf_free(&buf);
-
-        return 0;
+        buf_free(&value);
     }
+    else {
+        xml_add_prop(HTTP_FORBIDDEN, pctx->ns[NS_DAV],
+                &propstat[PROPSTAT_FORBID], prop->name, prop->ns, NULL, 0);
 
-    xml_add_prop(HTTP_FORBIDDEN, pctx->ns[NS_DAV],
-                 &propstat[PROPSTAT_FORBID], prop->name, prop->ns, NULL, 0);
-
-    *pctx->ret = HTTP_FORBIDDEN;
+        *pctx->ret = HTTP_FORBIDDEN;
+    }
 
     return 0;
 }

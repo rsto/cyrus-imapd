@@ -1402,7 +1402,7 @@ static int write_defaultalerts(jmap_req_t *req, struct mailbox *mbox,
         goto done;
     }
 
-    r = annotate_state_writemask(astate, annot, req->userid, &val);
+    r = annotate_state_write(astate, annot, req->userid, &val);
     if (r) {
         xsyslog(LOG_ERR, "failed to write annotation",
                 "annot=<%s> err=<%s>", annot, error_message(r));

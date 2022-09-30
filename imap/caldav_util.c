@@ -1634,7 +1634,7 @@ HIDDEN int caldav_read_defaultalarms_annot(const char *mboxname,
                                            int *is_dlistp)
 {
     struct buf mybuf = BUF_INITIALIZER;
-    annotatemore_lookupmask(mboxname, annot, userid, &mybuf);
+    annotatemore_lookup(mboxname, annot, userid, &mybuf);
 
     if (!buf_len(&mybuf))
         return CYRUSDB_NOTFOUND;
@@ -1982,7 +1982,7 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
                 caldav_format_defaultalarms_annot(annotval,
                         buf_cstring(icalbuf));
 
-                r = annotate_state_writemask(rock->astate,
+                r = annotate_state_write(rock->astate,
                         annot, rock->userid, annotval);
                 rock->todo[i].did_copy = !r;
 
@@ -2052,7 +2052,7 @@ HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
 
             caldav_format_defaultalarms_annot(annotval, "");
 
-            r = annotate_state_writemask(rock.astate,
+            r = annotate_state_write(rock.astate,
                     annot, userid,annotval);
 
             rock.todo[i].did_copy = !r;
