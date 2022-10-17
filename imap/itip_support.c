@@ -1398,18 +1398,18 @@ HIDDEN enum sched_deliver_outcome sched_deliver_local(const char *userid,
 
         icalcomponent_set_usedefaultalerts(ical);
 
-        /* Inject default alerts as VALARMS. */
-        icalcomponent *alarms_withtime =
-            caldav_read_defaultalarms(mailbox_name(mailbox), userid,
-                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME);
-        icalcomponent *alarms_withdate =
-            caldav_read_defaultalarms(mailbox_name(mailbox), userid,
-                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
+        /* Inject JMAP default alerts as VALARMS. */
+        icalcomponent *alerts_with_time = NULL, *alerts_without_time = NULL;
+        caldav_read_jmap_defaultalerts(mailbox_name(mailbox), userid,
+                &alerts_with_time, &alerts_without_time);
 
-        icalcomponent_add_defaultalerts(ical, alarms_withtime, alarms_withdate, 1);
+        icalcomponent_add_defaultalerts(ical,
+                alerts_with_time, alerts_without_time, 1);
 
-        if (alarms_withtime) icalcomponent_free(alarms_withtime);
-        if (alarms_withdate) icalcomponent_free(alarms_withdate);
+        if (alerts_with_time)
+            icalcomponent_free(alerts_with_time);
+        if (alerts_without_time)
+            icalcomponent_free(alerts_without_time);
     }
 
     /* Set SENT-BY property */

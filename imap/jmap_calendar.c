@@ -482,21 +482,20 @@ struct getcalendars_rock {
     int skip_hidden;
 };
 
-static json_t *getcalendar_defaultalerts(const char *mboxname,
-                                         const char *userid,
-                                         const char *annot)
+static json_t *alerts_from_ical(icalcomponent *ical)
 {
-    icalcomponent *ical = caldav_read_defaultalarms(mboxname, userid, annot);
-    if (!ical) return json_null();
-
     json_t *alerts = json_object();
+    struct buf buf = BUF_INITIALIZER;
+
     icalcomponent *valarm;
-    struct buf idbuf = BUF_INITIALIZER;
     for (valarm = icalcomponent_get_first_component(ical, ICAL_VALARM_COMPONENT);
          valarm;
          valarm = icalcomponent_get_next_component(ical, ICAL_VALARM_COMPONENT)) {
-        json_t *alert = jmapical_alert_from_ical(valarm, &idbuf);
-        if (alert) json_object_set_new(alerts, buf_cstring(&idbuf), alert);
+        buf_reset(&buf);
+        json_t *alert = jmapical_alert_from_ical(valarm, &buf);
+        if (alert) {
+            json_object_set_new(alerts, buf_cstring(&buf), alert);
+        }
     }
 
     if (!json_object_size(alerts)) {
@@ -504,9 +503,36 @@ static json_t *getcalendar_defaultalerts(const char *mboxname,
         alerts = json_null();
     }
 
-    icalcomponent_free(ical);
-    buf_free(&idbuf);
+    buf_free(&buf);
     return alerts;
+}
+
+static void getcalendar_defaultalerts(const char *mboxname,
+                                      const char *userid,
+                                      json_t **with_timep,
+                                      json_t **without_timep)
+{
+    icalcomponent *ical_with_time = NULL;
+    icalcomponent *ical_without_time = NULL;
+    caldav_read_jmap_defaultalerts(mboxname, userid,
+            &ical_with_time, &ical_without_time);
+
+    if (with_timep) {
+        *with_timep = ical_with_time ?
+            alerts_from_ical(ical_with_time) : NULL;
+    }
+
+    if (without_timep) {
+        *without_timep = ical_without_time ?
+            alerts_from_ical(ical_without_time) : NULL;
+    }
+
+    if (ical_with_time)
+        icalcomponent_free(ical_with_time);
+
+    if (ical_without_time)
+        icalcomponent_free(ical_without_time);
+
 }
 
 static json_t *getcalendar_debug_defaultalerts(const char *mboxname,
@@ -781,16 +807,18 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
         buf_free(&attrib);
     }
 
-    if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime")) {
-        json_object_set_new(obj, "defaultAlertsWithTime",
-                getcalendar_defaultalerts(mbentry->name, req->userid,
-                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME));
-    }
+    if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime") ||
+        jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
 
-    if (jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime")) {
-        json_object_set_new(obj, "defaultAlertsWithoutTime",
-                getcalendar_defaultalerts(mbentry->name, req->userid,
-                    JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME));
+        json_t *with_time, *without_time;
+        getcalendar_defaultalerts(mbentry->name, req->userid,
+                &with_time, &without_time);
+
+        if (jmap_wantprop(rock->get->props, "defaultAlertsWithTime"))
+            json_object_set_new(obj, "defaultAlertsWithTime", with_time);
+
+        if (jmap_wantprop(rock->get->props, "defaultAlertsWithoutTime"))
+            json_object_set_new(obj, "defaultAlertsWithoutTime", without_time);
     }
 
     if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
@@ -1297,10 +1325,8 @@ static void setcalendar_parsealerts(struct jmap_parser *parser,
 
 static void patch_current_defaultalerts_into_args(json_t *arg,
                                                   struct jmap_parser *parser,
-                                                  const char *userid,
-                                                  const char *mboxname,
                                                   const char *propname,
-                                                  const char *annot)
+                                                  json_t *cur_alerts)
 {
     json_t *patches = json_object();  /* Container for defaultAlerts patches */
     const char *field = NULL;
@@ -1318,9 +1344,7 @@ static void patch_current_defaultalerts_into_args(json_t *arg,
 
     if (json_object_size(patches)) {
         json_t *cur = json_object();  /* Container for current defaultAlerts */
-
-        json_object_set_new(cur, propname,
-                getcalendar_defaultalerts(mboxname, userid, annot));
+        json_object_set(cur, propname, cur_alerts);
 
         json_t *new = jmap_patchobject_apply(cur, patches, parser->invalid);
 
@@ -1347,16 +1371,13 @@ static void patch_current_defaultalerts_into_args(json_t *arg,
 static void parse_defaultalert_arg(jmap_req_t *req,
                                    struct jmap_parser *parser,
                                    json_t *args,
-                                   const char *calmboxname,
                                    int is_create,
                                    const char *propname,
-                                   const char *annot,
+                                   json_t *cur_alerts,
                                    ptrarray_t **alarmsp)
 {
     if (!is_create) {
-        patch_current_defaultalerts_into_args(args,
-                parser, req->userid, calmboxname, propname, annot);
-
+        patch_current_defaultalerts_into_args(args, parser, propname, cur_alerts);
     }
 
     struct jmapical_ctx *jmapctx = jmapical_context_new(req, NULL);
@@ -1645,16 +1666,21 @@ static void setcalendar_parseprops(jmap_req_t *req,
     }
 
     /* defaultAlertsWithTime */
-    parse_defaultalert_arg(req, parser, arg, mboxname, is_create,
-            "defaultAlertsWithTime",
-            JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
+    /* defaultAlertsWithoutTime */
+    json_t *cur_with_time = NULL, *cur_without_time = NULL;
+    getcalendar_defaultalerts(mboxname, req->userid,
+            &cur_with_time, &cur_without_time);
+
+    parse_defaultalert_arg(req, parser, arg, is_create,
+            "defaultAlertsWithTime", cur_with_time,
             &props->defaultalerts_with_time);
 
-    /* defaultAlertsWithoutTime */
-    parse_defaultalert_arg(req, parser, arg, mboxname, is_create,
-            "defaultAlertsWithoutTime",
-            JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
+    parse_defaultalert_arg(req, parser, arg, is_create,
+            "defaultAlertsWithoutTime", cur_without_time,
             &props->defaultalerts_without_time);
+
+    json_decref(cur_with_time);
+    json_decref(cur_without_time);
 
     // TODO(rsto): these shouldn't get special handling,
     // Calendar/set should just reject any unknown property

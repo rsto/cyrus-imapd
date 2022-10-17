@@ -145,14 +145,19 @@ extern void caldav_rewrite_attachprop_to_url(struct webdav_db *webdavdb,
 #define JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME \
     DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-without-time"
 
-/* Read the default alarms for mailbox mboxname and userid as
- * icalcomponent. The VALARMs are wrapped inside
- * a libical XROOT component */
-extern icalcomponent *caldav_read_defaultalarms(const char *mboxname,
-                                                const char *userid,
-                                                const char *annot);
+/* Read the JMAP default alerts for mailbox `mboxname` and `userid`,
+ * formatted as iCalendar VALARMS. The VALARMs are wrapped in a
+ * XROOT component. Both the output arguments `with_timep` and
+ * `without_timep` arguments may be null. If they point to a
+ * non-NULL value, then their value is left intact and no default
+ * alerts are read. */
+extern void caldav_read_jmap_defaultalerts(const char *mboxname,
+                                           const char *userid,
+                                           icalcomponent **with_timep,
+                                           icalcomponent **without_timep);
 
-/* Read the annotation value and parse it into is constituent parts.
+/* Read the value of default alert annotation `annot` for mailbox
+ * `mboxname` and `userid`. and parse it into its constituent parts.
  * Each of the output arguments guid, content and is_dlist are nullable. */
 extern int caldav_read_defaultalarms_annot(const char *mboxname,
                                            const char *userid,

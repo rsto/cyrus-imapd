@@ -2431,8 +2431,8 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
                                               const struct caldav_data *cdata,
                                               const struct index_record *record,
                                               icalcomponent *ical,
-                                              icalcomponent **alerts_withtimep,
-                                              icalcomponent **alerts_withdatep)
+                                              icalcomponent **alerts_with_timep,
+                                              icalcomponent **alerts_without_timep)
 {
     int usedefaultalerts = 0;
     struct dlist *dl = NULL;
@@ -2452,43 +2452,33 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
 
     /* Inject default alarms, if necessary */
     if (usedefaultalerts) {
-        icalcomponent *withtime = alerts_withtimep ? *alerts_withtimep : NULL;
-        icalcomponent *withdate = alerts_withdatep ? *alerts_withdatep : NULL;
+        /* Reuse default alerts if caller already read them */
+        icalcomponent *with_time = alerts_with_timep ? *alerts_with_timep : NULL;
+        icalcomponent *without_time = alerts_without_timep ? *alerts_without_timep : NULL;
 
-        /* Read default alarms */
-        if (!withtime) {
-            withtime =
-                caldav_read_defaultalarms(mailbox_name(mailbox),
-                        httpd_userid, JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME);
-
-            if (!withtime)
-                withtime = icalcomponent_new(ICAL_XROOT_COMPONENT);
-
-            if (alerts_withtimep)
-                *alerts_withtimep = withtime;
+        /* Read read default alerts */
+        if (!with_time || !without_time) {
+            caldav_read_jmap_defaultalerts(mailbox_name(mailbox),
+                    httpd_userid, &with_time, &without_time);
         }
 
-        if (!withdate) {
-            withdate =
-                caldav_read_defaultalarms(mailbox_name(mailbox),
-                        httpd_userid, JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
+        /* Add default alerts */
+        icalcomponent_add_defaultalerts(ical, with_time, without_time, 0);
 
-            if (!withdate)
-                withdate = icalcomponent_new(ICAL_XROOT_COMPONENT);
-
-            if (alerts_withdatep)
-                *alerts_withdatep = withdate;
+        /* Pass default alerts to caller or free them */
+        if (with_time) {
+            if (alerts_with_timep && *alerts_with_timep == NULL)
+                *alerts_with_timep = with_time;
+            else if (!alerts_with_timep)
+                icalcomponent_free(with_time);
         }
 
-        /* Add default alarms */
-        icalcomponent_add_defaultalerts(ical, withtime, withdate, 0);
-
-        /* Free default alarms */
-        if (withtime && !alerts_withtimep)
-            icalcomponent_free(withtime);
-
-        if (withdate && !alerts_withdatep)
-            icalcomponent_free(withdate);
+        if (without_time) {
+            if (alerts_without_timep && *alerts_without_timep == NULL)
+                *alerts_without_timep = without_time;
+            else if (!alerts_without_timep)
+                icalcomponent_free(without_time);
+        }
     }
 
     dlist_free(&dl);

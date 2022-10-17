@@ -63,14 +63,14 @@ sub test_calendar_set_inherit_defaultalerts
     $res = $jmap->CallMethods([
         ['Calendar/set', {
             create => {
-                calendar1 => {
-                    name => 'calendar1',
+                calendar2 => {
+                    name => 'calendar2',
                     defaultAlertsWithoutTime => $defaultAlertsWithoutTime,
                 }
             }
         }, 'R1'],
         ['Calendar/get', {
-            ids => ['#calendar1'],
+            ids => ['#calendar2'],
             properties => ['defaultAlertsWithTime', 'defaultAlertsWithoutTime'],
         }, 'R2']
     ]);
@@ -81,7 +81,6 @@ sub test_calendar_set_inherit_defaultalerts
     xlog $self, "Assert default alerts with time were inherited";
     $self->assert_deep_equals($defaultAlertsWithTime,
         $res->[1][1]{list}[0]{defaultAlertsWithTime});
-
 
     xlog $self, "Create calendar via CalDAV";
 

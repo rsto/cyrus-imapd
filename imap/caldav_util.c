@@ -1678,32 +1678,63 @@ HIDDEN int caldav_read_defaultalarms_annot(const char *mboxname,
     return 0;
 }
 
-EXPORTED icalcomponent *caldav_read_defaultalarms(const char *mboxname,
-                                                  const char *userid,
-                                                  const char *annot)
-
+static icalcomponent *read_jmap_defaultalerts(const char *mboxname,
+                                              const char *userid,
+                                              const char *annot,
+                                              const char *fallback_annot)
 {
     icalcomponent *ical = NULL;
     struct buf buf = BUF_INITIALIZER;
 
-    /* Read alarms from mailbox */
-    caldav_read_defaultalarms_annot(mboxname,
+    int r = caldav_read_defaultalarms_annot(mboxname,
             userid, annot, NULL, &buf, NULL);
 
-    if (buf_len(&buf)) {
-        ical = icalparser_parse_string(buf_cstring(&buf));
-        if (ical) {
-            if (icalcomponent_isa(ical) == ICAL_VALARM_COMPONENT) {
-                // wrap multiple VALARMs in a XROOT component
-                icalcomponent *root = icalcomponent_new(ICAL_XROOT_COMPONENT);
-                icalcomponent_add_component(root, ical);
-                ical = root;
-            }
+    if (r == CYRUSDB_NOTFOUND && fallback_annot) {
+        // Any new JMAP calendar should at least have the zero
+        // value set in their default alarm annotation. If there
+        // is no annotation set, this indicates that this user's
+        // calendars did not get migrated to JMAP calendar default
+        // alerts. Fall back reading their CalDAV alarms.
+        buf_reset(&buf);
+        r = caldav_read_defaultalarms_annot(mboxname,
+                userid, fallback_annot, NULL, &buf, NULL);
+    }
+
+    if (r || !buf_len(&buf))
+        goto done;
+
+    ical = icalparser_parse_string(buf_cstring(&buf));
+    if (ical) {
+        if (icalcomponent_isa(ical) == ICAL_VALARM_COMPONENT) {
+            // libical wraps multiple VALARMs in a XROOT,
+            // so do the same for a single VALARM
+            icalcomponent *root = icalcomponent_new(ICAL_XROOT_COMPONENT);
+            icalcomponent_add_component(root, ical);
+            ical = root;
         }
     }
 
+done:
     buf_free(&buf);
     return ical;
+}
+
+EXPORTED void caldav_read_jmap_defaultalerts(const char *mboxname,
+                                             const char *userid,
+                                             icalcomponent **with_timep,
+                                             icalcomponent **without_timep)
+{
+    if (with_timep) {
+        *with_timep = read_jmap_defaultalerts(mboxname, userid,
+                JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
+                CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME);
+    }
+
+    if (without_timep) {
+        *without_timep = read_jmap_defaultalerts(mboxname, userid,
+                JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
+                CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE);
+    }
 }
 
 EXPORTED void caldav_format_defaultalarms_annot(struct buf *dst, const char *icalstr)
@@ -1934,8 +1965,8 @@ struct copy_defaultalerts_rock {
     struct {
         const char *annot;
         int did_copy;
-    } todo[2];
-    const char *ignore_mboxname;
+    } alerts[2];
+    struct mailbox *mailbox;
     const char *userid;
 };
 
@@ -1947,7 +1978,7 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
     if (mbtype_isa(mbentry->mbtype) != MBTYPE_CALENDAR)
         return 0;
 
-    if (!strcmpsafe(mbentry->name, rock->ignore_mboxname))
+    if (!strcmpsafe(mbentry->name, mailbox_name(rock->mailbox)))
         return 0;
 
     mbname_t *mbname = mbname_from_intname(mbentry->name);
@@ -1960,8 +1991,8 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
     }
 
     for (int i = 0; i < 2; i++) {
-        if (!rock->todo[i].did_copy) {
-            const char *annot = rock->todo[i].annot;
+        if (!rock->alerts[i].did_copy) {
+            const char *annot = rock->alerts[i].annot;
             struct buf *icalbuf = &rock->buf[0];
             buf_reset(icalbuf);
             struct buf *annotval = &rock->buf[1];
@@ -1970,10 +2001,12 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
             r = caldav_read_defaultalarms_annot(mbentry->name,
                     rock->userid, annot, NULL, icalbuf, NULL);
 
-            if (r && r != CYRUSDB_NOTFOUND) {
-                xsyslog(LOG_WARNING, "failed to read annotation",
-                        "mboxname=<%s> annot=<%s> err=<%s>",
-                        mbentry->name, annot, cyrusdb_strerror(r));
+            if (r) {
+                if (r != CYRUSDB_NOTFOUND) {
+                    xsyslog(LOG_WARNING, "failed to read annotation",
+                            "mboxname=<%s> annot=<%s> err=<%s>",
+                            mbentry->name, annot, cyrusdb_strerror(r));
+                }
                 r = 0;
                 continue; // ignore
             }
@@ -1984,7 +2017,7 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
 
                 r = annotate_state_write(rock->astate,
                         annot, rock->userid, annotval);
-                rock->todo[i].did_copy = !r;
+                rock->alerts[i].did_copy = !r;
 
                 if (r) {
                     xsyslog(LOG_ERR, "failed to write annotation",
@@ -1998,7 +2031,7 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
 
     mbname_free(&mbname);
 
-    if (!r && rock->todo[0].did_copy && rock->todo[1].did_copy)
+    if (!r && rock->alerts[0].did_copy && rock->alerts[1].did_copy)
         r = CYRUSDB_DONE;
 
     return r;
@@ -2013,29 +2046,34 @@ HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
 
     struct copy_defaultalerts_rock rock = {
         .astate = astate,
-        .todo = {{
+        .alerts = {{
             .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME,
         }, {
             .annot = JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
         }},
-        .ignore_mboxname = mailbox_name(mailbox),
+        .mailbox = mailbox,
         .userid = userid,
     };
 
+
     // Attempt to copy default alerts from scheduling default
-    const char *mboxname = caldav_scheddefault(userid, 0);
-    if (mboxname && strcmpsafe(mboxname, rock.ignore_mboxname)) {
+    char *defaultcoll = caldav_scheddefault(userid, 1);
+    if (defaultcoll) {
+        char *mboxname = caldav_mboxname(userid, defaultcoll);
         mbentry_t *mbentry;
         if (!mboxlist_lookup(mboxname, &mbentry, NULL)) {
             r = copy_defaultalerts_cb(mbentry, &rock);
         }
+        mboxlist_entry_free(&mbentry);
+        free(mboxname);
+        free(defaultcoll);
     }
 
     if (!r) {
         // Otherwise copy from any calendar that has default alerts
-        if (!rock.todo[0].did_copy || !rock.todo[1].did_copy) {
+        if (!rock.alerts[0].did_copy || !rock.alerts[1].did_copy) {
             char *calhomename = caldav_mboxname(userid, NULL);
-            r = mboxlist_allmbox(calhomename, copy_defaultalerts_cb,
+            r = mboxlist_mboxtree(calhomename, copy_defaultalerts_cb,
                     &rock, MBOXTREE_SKIP_ROOT);
             free(calhomename);
         }
@@ -2045,8 +2083,8 @@ HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
     // to zero. This allows to identify if a user never got their
     // default alerts migrated from CalDAV to JMAP.
     for (int i = 0; i < 2; i++) {
-        if (!rock.todo[i].did_copy) {
-            const char *annot = rock.todo[i].annot;
+        if (!rock.alerts[i].did_copy) {
+            const char *annot = rock.alerts[i].annot;
             struct buf *annotval = &rock.buf[0];
             buf_reset(annotval);
 
@@ -2055,7 +2093,7 @@ HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
             r = annotate_state_write(rock.astate,
                     annot, userid,annotval);
 
-            rock.todo[i].did_copy = !r;
+            rock.alerts[i].did_copy = !r;
 
             if (r) {
                 xsyslog(LOG_WARNING, "failed to write annotation",
