@@ -2138,5 +2138,61 @@ sub test_emailsubmission_scheduled_send_null_onsend
     $self->assert_num_equals(0, scalar @$alarmdata);
 }
 
+sub test_debug_jmap_samples_issue23
+    :min_version_3_7 :needs_component_jmap
+{
+    my ($self) = @_;
+    my $jmap = $self->{jmap};
+
+    my $res = $jmap->CallMethods([['Identity/get', {}, 'R1']]);
+    my $identityId = $res->[0][1]->{list}[0]->{id};
+    $self->assert_not_null($identityId);
+
+    $res = $jmap->CallMethods([
+        ['Mailbox/set', {
+            create => {
+                draftsMbox => {
+                    name => 'Drafts',
+                    role => 'drafts'
+                },
+            },
+        }, 'R1'],
+        ['Email/set', {
+           create => {
+               email1 => {
+                   from      => [ { email => 'from@example.com' } ],
+                   to        => [ { email => 'test+1@example.com' } ],
+                   subject   => 'email1',
+                   keywords  => { '$draft' => JSON::true  },
+                   mailboxIds => { '#draftsMbox' => JSON::true },
+                   bodyValues  => { body => { value => 'email1' }  },
+                   textBody    => [ { partId => 'body', type => 'text/plain' } ],
+               },
+               email2 => {
+                   from      => [ { email => 'from@example.com' } ],
+                   to        => [ { email => 'test+2@example.com' } ],
+                   subject   => 'email2',
+                   keywords  => { '$draft' => JSON::true  },
+                   mailboxIds => { '#draftsMbox' => JSON::true },
+                   bodyValues  => { body => { value => 'email2' }  },
+                   textBody    => [ { partId => 'body', type => 'text/plain' } ],
+               },
+           },
+        }, 'R2'],
+        ['EmailSubmission/set', {
+            onSuccessDestroyEmail => [ '#sendIt1', '#sendIt2' ],
+            create => {
+                sendIt1 => {
+                    emailId => '#email1',
+                    identityId => $identityId,
+                },
+                sendIt2 => {
+                    emailId => '#email2',
+                    identityId => $identityId,
+                },
+            },
+        }, 'R2'],
+    ]);
+}
 
 1;
