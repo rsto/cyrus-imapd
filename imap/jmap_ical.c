@@ -7509,7 +7509,7 @@ static void calendarevent_to_ical(icalcomponent *comp,
     /* useDefaultAlerts */
     jprop = json_object_get(event, "useDefaultAlerts");
     if (json_is_boolean(jprop)) {
-        remove_icalxprop(comp, "X-APPLE-DEFAULT-ALARM");
+        remove_icalxprop(comp, "X-APPLE-DEFAULT-ALARM"); // remove legacy property
         if (json_boolean_value(jprop)) {
             icalproperty *prop = icalproperty_new(ICAL_X_PROPERTY);
             icalproperty_set_x_name(prop, JMAPICAL_XPROP_USEDEFAULTALERTS);

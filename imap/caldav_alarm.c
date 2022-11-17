@@ -728,7 +728,7 @@ static int has_usedefaultalarms(icalcomponent *comp)
         /* Check patch for default alerts properties */
         const char *xname = icalproperty_get_x_name(prop);
         if (!strcasecmp(xname, "X-JMAP-USEDEFAULTALERTS") ||
-            !strcasecmp(xname, "X-APPLE-DEFAULT-ALARM")) {
+            !strcasecmp(xname, "X-APPLE-DEFAULT-ALARM")) { // required for legacy data
             const char *strval = icalproperty_get_value_as_string(prop);
             if (!strcasecmpsafe(strval, "TRUE")) {
                 return 1;

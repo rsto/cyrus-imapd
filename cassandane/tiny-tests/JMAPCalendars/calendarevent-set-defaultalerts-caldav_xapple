@@ -63,7 +63,7 @@ sub test_calendarevent_set_defaultalerts_caldav_xapple
     my $valarm = (grep { $_->ical_entry_type() eq 'VALARM' } @{$vevent->entries()})[0];
     $self->assert_not_null($valarm);
 
-    xlog "Assert X-APPLE-DEFAULT-ALARM is set on VALARM";
-    my $xprop = $valarm->property('x-apple-default-alarm')->[0];
+    xlog "Assert X-JMAP-DEFAULT-ALARM is set on VALARM";
+    my $xprop = $valarm->property('x-jmap-default-alarm')->[0];
     $self->assert_str_equals('TRUE', $xprop->value());
 }

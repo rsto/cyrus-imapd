@@ -592,7 +592,7 @@ static int validate_propupdates(icalcomponent *ical, icalcomponent *oldical,
             case ICAL_X_PROPERTY:
                 xname = icalproperty_get_x_name(prop);
                 if (strcmp(xname, "X-JMAP-USEDEFAULTALERTS") &&
-                    strcmp(xname, "X-APPLE-DEFAULT-ALARM") &&
+                    strcmp(xname, "X-APPLE-DEFAULT-ALARM") && // required for legacy data
                     (strncmp(xname, "X-MOZ-", 6) ||
                      (strcmp(xname+6, "LASTACK") &&
                       strcmp(xname+6, "SNOOZE-TIME")))) {
