@@ -58,6 +58,7 @@
 #include "caldav_db.h"
 #include "caldav_util.h"
 #include "cyr_qsort_r.h"
+#include "defaultalarms.h"
 #include "dynarray.h"
 #include "global.h"
 #include "hash.h"
@@ -512,27 +513,20 @@ static void getcalendar_defaultalerts(const char *mboxname,
                                       json_t **with_timep,
                                       json_t **without_timep)
 {
-    icalcomponent *ical_with_time = NULL;
-    icalcomponent *ical_without_time = NULL;
-    caldav_read_jmap_defaultalerts(mboxname, userid,
-            &ical_with_time, &ical_without_time);
+    struct defaultalarms defalarms = DEFAULTALARMS_INITIALIZER;
+    defaultalarms_load(mboxname, userid, &defalarms);
 
     if (with_timep) {
-        *with_timep = ical_with_time ?
-            alerts_from_ical(ical_with_time) : NULL;
+        *with_timep = defalarms.with_time ?
+            alerts_from_ical(defalarms.with_time) : NULL;
     }
 
     if (without_timep) {
-        *without_timep = ical_without_time ?
-            alerts_from_ical(ical_without_time) : NULL;
+        *without_timep = defalarms.with_date ?
+            alerts_from_ical(defalarms.with_date) : NULL;
     }
 
-    if (ical_with_time)
-        icalcomponent_free(ical_with_time);
-
-    if (ical_without_time)
-        icalcomponent_free(ical_without_time);
-
+    defaultalarms_fini(&defalarms);
 }
 
 static json_t *getcalendar_debug_defaultalerts(const char *mboxname,
@@ -545,7 +539,7 @@ static json_t *getcalendar_debug_defaultalerts(const char *mboxname,
     struct message_guid guid = MESSAGE_GUID_INITIALIZER;
     int is_dlist = 0;
 
-    int r = caldav_read_defaultalarms_annot(mboxname, userid, annot,
+    int r = defaultalarms_read_annot(mboxname, userid, annot,
                 &guid, &content, &is_dlist);
     if (!r) {
         jval = json_pack("{s:s s:s s:b}",
@@ -825,13 +819,13 @@ static int getcalendars_cb(const mbentry_t *mbentry, void *vrock)
         if (jmap_wantprop(rock->get->props, "debugDefaultAlertsWithTime")) {
             json_object_set_new(obj, "debugDefaultAlertsWithTime",
                     getcalendar_debug_defaultalerts(mbentry->name, req->userid,
-                        JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME));
+                        JMAP_ANNOT_DEFAULTALERTS_WITH_TIME));
         }
 
         if (jmap_wantprop(rock->get->props, "debugDefaultAlertsWithoutTime")) {
             json_object_set_new(obj, "debugDefaultAlertsWithoutTime",
                     getcalendar_debug_defaultalerts(mbentry->name, req->userid,
-                        JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME));
+                        JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME));
         }
 
         if (jmap_wantprop(rock->get->props, "caldavDefaultAlarmDateTime")) {
@@ -1412,7 +1406,7 @@ static int write_defaultalerts(jmap_req_t *req, struct mailbox *mbox,
     // if the user has their alarms already migrated from CalDAV
     // default alarms to JMAP default alarms.
 
-    caldav_format_defaultalarms_annot(&val, buf_cstring(&raw));
+    defaultalarms_format_annot(&val, buf_cstring(&raw));
 
     annotate_state_t *astate;
     int r = mailbox_get_annotate_state(mbox, 0, &astate);
@@ -1886,10 +1880,10 @@ static int setcalendar_writeprops(jmap_req_t *req,
     /* defaultAlertsWithoutTime */
     if (!r && (props->defaultalerts_with_time || props->defaultalerts_without_time)) {
         r = write_defaultalerts(req, mbox, props->defaultalerts_with_time,
-                JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME);
+                JMAP_ANNOT_DEFAULTALERTS_WITH_TIME);
         if (!r) {
             r = write_defaultalerts(req, mbox, props->defaultalerts_without_time,
-                JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
+                JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME);
         }
         if (!r) {
             r = caldav_bump_defaultalarms(mbox);

@@ -799,6 +799,29 @@ EXPORTED icalcomponent *record_to_ical(struct mailbox *mailbox,
     return ical;
 }
 
+EXPORTED void icalcomponent_add_personal_data_from_dl(icalcomponent *ical, struct dlist *dl)
+{
+    const char *icalstr;
+    icalcomponent *vpatch;
+
+    /* Parse the value and fetch the patch */
+    dlist_getatom(dl, "VPATCH", &icalstr);
+    vpatch = icalparser_parse_string(icalstr);
+
+    /* Apply the patch to the "base" resource */
+    icalcomponent_apply_vpatch(ical, vpatch, NULL, NULL);
+
+    icalcomponent_free(vpatch);
+}
+
+EXPORTED void icalcomponent_add_personal_data(icalcomponent *ical, struct buf *userdata)
+{
+    struct dlist *dl;
+    dlist_parsemap(&dl, 1, 0, buf_base(userdata), buf_len(userdata));
+    icalcomponent_add_personal_data_from_dl(ical, dl);
+    dlist_free(&dl);
+}
+
 EXPORTED const char *get_icalcomponent_errstr(icalcomponent *ical)
 {
     icalcomponent *comp;
@@ -844,6 +867,83 @@ EXPORTED const char *get_icalcomponent_errstr(icalcomponent *ical)
     return NULL;
 }
 
+EXPORTED int icalcomponent_get_usedefaultalerts(icalcomponent *comp)
+{
+    icalcomponent *ical = NULL;
+    icalcomponent_kind kind = ICAL_NO_COMPONENT;
+    int use_defaultalerts = 0;
+
+    if (icalcomponent_isa(comp) == ICAL_VCALENDAR_COMPONENT) {
+        ical = comp;
+        comp = icalcomponent_get_first_real_component(ical);
+        kind = icalcomponent_isa(comp);
+    }
+    do {
+        int x_apple = 0;
+        icalproperty *prop;
+        for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
+             prop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY)) {
+            const char *propname = icalproperty_get_x_name(prop);
+
+            if (!strcasecmp(propname, "X-JMAP-USEDEFAULTALERTS")) {
+                const char *val = icalproperty_get_value_as_string(prop);
+                use_defaultalerts = !strcasecmpsafe(val, "TRUE");
+            }
+
+            if (!strcasecmp(propname, "X-APPLE-DEFAULT-ALARM")) {
+                // We set X-APPLE-DEFAULT-ALARM on the VEVENT to indicate
+                // useDefaultAlerts=true on a JSCalendar event, but this
+                // was wrong. Keep reading it for iCalendar data that we
+                // already wrote with it.
+                const char *val = icalproperty_get_value_as_string(prop);
+                x_apple = !strcasecmpsafe(val, "TRUE");
+                continue;
+            }
+        }
+
+        if (use_defaultalerts > 0 || x_apple > 0)
+            return 1;
+
+        if (ical) comp = icalcomponent_get_next_component(ical, kind);
+    } while (ical && comp);
+
+    return use_defaultalerts;
+}
+
+EXPORTED void icalcomponent_set_usedefaultalerts(icalcomponent *comp)
+{
+    icalcomponent *ical = NULL;
+    icalcomponent_kind kind = ICAL_NO_COMPONENT;
+
+    if (icalcomponent_isa(comp) == ICAL_VCALENDAR_COMPONENT) {
+        ical = comp;
+        comp = icalcomponent_get_first_real_component(ical);
+        kind = icalcomponent_isa(comp);
+    }
+    do {
+        icalproperty *prop, *nextprop;
+        for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
+             prop = nextprop) {
+
+            nextprop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY);
+
+            // Remove existing properties, including the X-APPLE we used for a while.
+            if (!strcasecmp(icalproperty_get_x_name(prop), "X-JMAP-USEDEFAULTALERTS") ||
+                !strcasecmp(icalproperty_get_x_name(prop), "X-APPLE-DEFAULT-ALARM")) {
+                icalcomponent_remove_property(comp, prop);
+                icalproperty_free(prop);
+                continue;
+            }
+        }
+
+        icalproperty *xprop = icalproperty_new(ICAL_X_PROPERTY);
+        icalproperty_set_x_name(xprop, "X-JMAP-USEDEFAULTALERTS");
+        icalproperty_set_value(xprop, icalvalue_new_boolean(1));
+        icalcomponent_add_property(comp, xprop);
+
+        if (ical) comp = icalcomponent_get_next_component(ical, kind);
+    } while (ical && comp);
+}
 
 EXPORTED void icalcomponent_remove_invitee(icalcomponent *comp,
                                            icalproperty *prop)
@@ -2168,342 +2268,6 @@ EXPORTED void icalproperty_set_xparam(icalproperty *prop,
     icalparameter_set_xname(param, name);
     icalparameter_set_xvalue(param, val);
     icalproperty_add_parameter(prop, param);
-}
-
-EXPORTED int icalcomponent_read_usedefaultalerts_value(icalcomponent *comp)
-{
-    icalcomponent *ical = NULL;
-    icalcomponent_kind kind = ICAL_NO_COMPONENT;
-    int use_defaultalerts = -1;
-
-    if (icalcomponent_isa(comp) == ICAL_VCALENDAR_COMPONENT) {
-        ical = comp;
-        comp = icalcomponent_get_first_real_component(ical);
-        kind = icalcomponent_isa(comp);
-    }
-    do {
-        int x_apple = 0;
-        icalproperty *prop;
-        for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
-             prop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY)) {
-            const char *propname = icalproperty_get_x_name(prop);
-
-            if (!strcasecmp(propname, "X-JMAP-USEDEFAULTALERTS")) {
-                const char *val = icalproperty_get_value_as_string(prop);
-                use_defaultalerts = !strcasecmpsafe(val, "TRUE");
-            }
-
-            if (!strcasecmp(propname, "X-APPLE-DEFAULT-ALARM")) {
-                // We set X-APPLE-DEFAULT-ALARM on the VEVENT to indicate
-                // useDefaultAlerts=true on a JSCalendar event, but this
-                // was wrong. Keep reading it for iCalendar data that we
-                // already wrote with it.
-                const char *val = icalproperty_get_value_as_string(prop);
-                x_apple = !strcasecmpsafe(val, "TRUE");
-                continue;
-            }
-        }
-
-        if (use_defaultalerts > 0 || x_apple > 0)
-            return 1;
-
-        if (ical) comp = icalcomponent_get_next_component(ical, kind);
-    } while (ical && comp);
-
-    return use_defaultalerts;
-}
-
-EXPORTED void icalcomponent_set_usedefaultalerts(icalcomponent *comp)
-{
-    icalcomponent *ical = NULL;
-    icalcomponent_kind kind = ICAL_NO_COMPONENT;
-
-    if (icalcomponent_isa(comp) == ICAL_VCALENDAR_COMPONENT) {
-        ical = comp;
-        comp = icalcomponent_get_first_real_component(ical);
-        kind = icalcomponent_isa(comp);
-    }
-    do {
-        icalproperty *prop, *nextprop;
-        for (prop = icalcomponent_get_first_property(comp, ICAL_X_PROPERTY); prop;
-             prop = nextprop) {
-
-            nextprop = icalcomponent_get_next_property(comp, ICAL_X_PROPERTY);
-
-            // Remove existing properties, including the X-APPLE we used for a while.
-            if (!strcasecmp(icalproperty_get_x_name(prop), "X-JMAP-USEDEFAULTALERTS") ||
-                !strcasecmp(icalproperty_get_x_name(prop), "X-APPLE-DEFAULT-ALARM")) {
-                icalcomponent_remove_property(comp, prop);
-                icalproperty_free(prop);
-                continue;
-            }
-        }
-
-        icalproperty *xprop = icalproperty_new(ICAL_X_PROPERTY);
-        icalproperty_set_x_name(xprop, "X-JMAP-USEDEFAULTALERTS");
-        icalproperty_set_value(xprop, icalvalue_new_boolean(1));
-        icalcomponent_add_property(comp, xprop);
-
-        if (ical) comp = icalcomponent_get_next_component(ical, kind);
-    } while (ical && comp);
-}
-
-static void init_default_alarms(icalcomponent *default_alarms)
-{
-    struct buf buf = BUF_INITIALIZER;
-
-    icalcomponent *valarm;
-    for (valarm = icalcomponent_get_first_component(default_alarms,
-                ICAL_VALARM_COMPONENT);
-         valarm;
-         valarm = icalcomponent_get_next_component(default_alarms,
-             ICAL_VALARM_COMPONENT)) {
-
-        if (!icalcomponent_get_x_property_by_name(valarm, "X-JMAP-DEFAULT-ALARM")) {
-            icalproperty *prop = icalproperty_new(ICAL_X_PROPERTY);
-            icalproperty_set_x_name(prop, "X-JMAP-DEFAULT-ALARM");
-            icalproperty_set_value(prop, icalvalue_new_boolean(1));
-            icalcomponent_add_property(valarm, prop);
-        }
-
-        if (!icalcomponent_get_uid(valarm)) {
-            icalcomponent *myalarm = icalcomponent_clone(valarm);
-            icalcomponent_normalize(myalarm);
-            buf_setcstr(&buf, icalcomponent_as_ical_string(myalarm));
-            icalcomponent_free(myalarm);
-
-            uint8_t digest[SHA1_DIGEST_LENGTH+1];
-            xsha1(buf_base(&buf), buf_len(&buf), digest);
-            digest[SHA1_DIGEST_LENGTH] = '\0';
-            icalcomponent_set_uid(valarm, (const char*) digest);
-        }
-    }
-
-    buf_free(&buf);
-}
-
-static int compare_valarm_reverse(const void **va, const void **vb)
-{
-    icalcomponent *a = (icalcomponent*)(*va);
-    icalcomponent *b = (icalcomponent*)(*vb);
-
-    // Regular alarms sort before snooze alarms
-    int is_snooze_a =
-        !!icalcomponent_get_first_property(a, ICAL_RELATEDTO_PROPERTY);
-    int is_snooze_b =
-        !!icalcomponent_get_first_property(b, ICAL_RELATEDTO_PROPERTY);
-
-    if (is_snooze_a != is_snooze_b)
-        return -(is_snooze_a - is_snooze_b);
-
-    // Default alarms sort before non-default alarms
-    int is_default_a =
-        !!icalcomponent_get_x_property_by_name(a, "X-JMAP-DEFAULT-ALARM");
-    int is_default_b =
-        !!icalcomponent_get_x_property_by_name(b, "X-JMAP-DEFAULT-ALARM");
-
-    if (is_default_a != is_default_b)
-        return -(is_default_a - is_default_b);
-
-    // Finally, sort by UID
-    return -strcmpsafe(icalcomponent_get_uid(a), icalcomponent_get_uid(b));
-}
-
-static void merge_default_alarms(icalcomponent *comp,
-                                 icalcomponent *default_alarms)
-{
-    // Remove existing alarms
-    ptrarray_t old_alarms = PTRARRAY_INITIALIZER;
-    strarray_t related_uids = STRARRAY_INITIALIZER;
-
-    icalcomponent *valarm, *nextalarm;
-    for (valarm = icalcomponent_get_first_component(comp, ICAL_VALARM_COMPONENT);
-         valarm; valarm = nextalarm) {
-
-        nextalarm = icalcomponent_get_next_component(comp, ICAL_VALARM_COMPONENT);
-
-        icalcomponent_remove_component(comp, valarm);
-        ptrarray_append(&old_alarms, valarm);
-
-        icalproperty *prop = icalcomponent_get_first_property(valarm, ICAL_RELATEDTO_PROPERTY);
-        if (prop) {
-            const char *related_uid = icalproperty_get_relatedto(prop);
-            if (related_uid)
-                strarray_append(&related_uids, related_uid);
-        }
-    }
-
-    // Create copy of new default alarms, if any
-    ptrarray_t new_alarms = PTRARRAY_INITIALIZER;
-    if (default_alarms) {
-        icalcomponent *valarm;
-        for (valarm = icalcomponent_get_first_component(default_alarms, ICAL_VALARM_COMPONENT);
-             valarm;
-             valarm = icalcomponent_get_next_component(default_alarms, ICAL_VALARM_COMPONENT)) {
-
-
-            icalcomponent *myalarm = icalcomponent_clone(valarm);
-            ptrarray_append(&new_alarms, myalarm);
-
-            /* Replace default description with component summary */
-            const char *desc = icalcomponent_get_summary(comp);
-            if (desc && *desc != '\0') {
-                icalproperty *prop =
-                    icalcomponent_get_first_property(myalarm, ICAL_DESCRIPTION_PROPERTY);
-                if (prop) {
-                    icalcomponent_remove_property(myalarm, prop);
-                    icalproperty_free(prop);
-                }
-                prop = icalproperty_new_description(desc);
-                icalcomponent_add_property(myalarm, prop);
-            }
-        }
-    }
-
-    strarray_sort(&related_uids, cmpstringp_raw);
-
-    // Sort in reverse order, we'll pop from the arrays later.
-    ptrarray_sort(&old_alarms, compare_valarm_reverse);
-    ptrarray_sort(&new_alarms, compare_valarm_reverse);
-
-    int is_recur_main =
-        !icalcomponent_get_first_property(comp, ICAL_RECURRENCEID_PROPERTY) &&
-        (icalcomponent_get_first_property(comp, ICAL_RRULE_PROPERTY) ||
-         icalcomponent_get_first_property(comp, ICAL_RDATE_PROPERTY));
-
-    // Combine old and new default alarms
-    icalcomponent *old, *new;
-    do {
-        old = ptrarray_pop(&old_alarms);
-        new = ptrarray_pop(&new_alarms);
-
-        if (new) {
-            // Add JMAP default alarm
-            icalcomponent_add_component(comp, new);
-            if (old) {
-                const char *old_uid = icalcomponent_get_uid(old);
-                const char *new_uid = icalcomponent_get_uid(new);
-                if (!strcmpsafe(old_uid, new_uid)) {
-                    // A default alarm with the same UID already
-                    // existed in the component. Use its new
-                    // definition, but keep it acknowledged.
-                    icalproperty *prop, *nextprop;
-                    for (prop = icalcomponent_get_first_property(old,
-                                ICAL_ACKNOWLEDGED_PROPERTY);
-                         prop; prop = nextprop) {
-
-                        nextprop = icalcomponent_get_next_property(old,
-                                ICAL_ACKNOWLEDGED_PROPERTY);
-                        icalcomponent_remove_property(old, prop);
-                        icalcomponent_add_property(new, prop);
-                    }
-
-                    // Throw away old alarm
-                    icalcomponent_free(old);
-                    old = NULL;
-                }
-            }
-        }
-
-        if (old) {
-            int is_default =
-                !!icalcomponent_get_x_property_by_name(old, "X-JMAP-DEFAULT-ALARM");
-
-            if (is_default) {
-                // This is an outdated default alarm.
-                const char *old_uid = icalcomponent_get_uid(old);
-                int is_related = old_uid &&
-                    strarray_find(&related_uids, old_uid, 0) >= 0;
-
-                int is_acked = !!icalcomponent_get_first_property(old,
-                        ICAL_ACKNOWLEDGED_PROPERTY);
-
-                if (is_related || is_acked) {
-                    // Keep acknowledged and snoozed alarms
-                    icalcomponent_add_component(comp, old);
-
-                    if (!is_acked) {
-                        // Acknowledge so that clients ignore it.
-                        icalcomponent_add_property(old,
-                                icalproperty_new_acknowledged(
-                                    icaltime_current_time_with_zone(
-                                        icaltimezone_get_utc_timezone())));
-
-                    }
-
-                    if (is_recur_main) {
-                        // Make sure this alarm can't fire anymore.
-                        icalproperty *trigger =
-                            icalcomponent_get_first_property(old, ICAL_TRIGGER_PROPERTY);
-                        if (trigger) {
-                            // Use Apple's magic 5545 timestamp
-                            struct icaltriggertype expired_trigger = {
-                                .time = {
-                                    .year = 1976,
-                                    .month = 4,
-                                    .day = 1,
-                                    .hour = 0,
-                                    .minute = 55,
-                                    .second = 45,
-                                    .zone = icaltimezone_get_utc_timezone()
-                                }
-                            };
-                            icalproperty_set_trigger(trigger, expired_trigger);
-                        }
-                    }
-                }
-                else icalcomponent_free(old);
-            }
-            else {
-                // Keep user-defined alarm
-                icalcomponent_add_component(comp, old);
-            }
-        }
-    } while (old || new);
-
-    ptrarray_fini(&old_alarms);
-    ptrarray_fini(&new_alarms);
-    strarray_fini(&related_uids);
-}
-
-EXPORTED void icalcomponent_add_defaultalerts(icalcomponent *ical,
-                                              icalcomponent *withtime,
-                                              icalcomponent *withdate,
-                                              int force)
-{
-    if (!withtime && !withdate)
-        return;
-
-    if (withtime)
-        init_default_alarms(withtime);
-
-    if (withdate)
-        init_default_alarms(withdate);
-
-    icalcomponent *comp = icalcomponent_get_first_real_component(ical);
-    icalcomponent_kind kind = icalcomponent_isa(comp);
-    if (kind != ICAL_VEVENT_COMPONENT && kind != ICAL_VTODO_COMPONENT)
-        return;
-
-    for ( ; comp; comp = icalcomponent_get_next_component(ical, kind)) {
-
-        if (!force && icalcomponent_read_usedefaultalerts_value(comp) <= 0)
-            continue;
-
-        // Determine which default alarms to add
-        int is_date;
-        if (kind == ICAL_VTODO_COMPONENT) {
-            if (icalcomponent_get_first_property(comp, ICAL_DTSTART_PROPERTY))
-                is_date = icalcomponent_get_dtstart(comp).is_date;
-            else if (icalcomponent_get_first_property(comp, ICAL_DUE_PROPERTY))
-                is_date = icalcomponent_get_due(comp).is_date;
-            else
-                is_date = 1;
-        }
-        else is_date = icalcomponent_get_dtstart(comp).is_date;
-
-        merge_default_alarms(comp, is_date ?  withdate : withtime);
-    }
 }
 
 static void check_tombstone(struct observance *tombstone,

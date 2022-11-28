@@ -68,6 +68,7 @@
 #include "caldav_util.h"
 #include "charset.h"
 #include "css3_color.h"
+#include "defaultalarms.h"
 #include "global.h"
 #include "hash.h"
 #include "httpd.h"
@@ -2427,12 +2428,11 @@ static struct icaltimetype icaltime_from_rfc3339_string(const char *str)
     return icaltime_null_time();
 }
 
-static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
+static void personalize_and_add_defaultalarms(struct mailbox *mailbox,
                                               const struct caldav_data *cdata,
                                               const struct index_record *record,
                                               icalcomponent *ical,
-                                              icalcomponent **alerts_with_timep,
-                                              icalcomponent **alerts_without_timep)
+                                              struct defaultalarms **defalarmsp)
 {
     int usedefaultalerts = 0;
     struct dlist *dl = NULL;
@@ -2441,8 +2441,8 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
     if (namespace_calendar.allow & ALLOW_USERDATA) {
         if (caldav_is_personalized(mailbox, cdata, httpd_userid, &userdata)) {
             dlist_parsemap(&dl, 1, 0, buf_base(&userdata), buf_len(&userdata));
-            add_personal_data_from_dl(ical, dl);
-            usedefaultalerts = caldav_usedefaultalerts(dl, mailbox, record, &ical);
+            icalcomponent_add_personal_data_from_dl(ical, dl);
+            usedefaultalerts = caldav_get_usedefaultalerts(dl, mailbox, record, &ical);
         }
     }
 
@@ -2452,32 +2452,27 @@ static void personalize_and_add_defaultalerts(struct mailbox *mailbox,
 
     /* Inject default alarms, if necessary */
     if (usedefaultalerts) {
-        /* Reuse default alerts if caller already read them */
-        icalcomponent *with_time = alerts_with_timep ? *alerts_with_timep : NULL;
-        icalcomponent *without_time = alerts_without_timep ? *alerts_without_timep : NULL;
+        /* Reuse default alarms if caller already read them */
+        struct defaultalarms *defalarms = defalarmsp ? *defalarmsp : NULL;
 
-        /* Read read default alerts */
-        if (!with_time || !without_time) {
-            caldav_read_jmap_defaultalerts(mailbox_name(mailbox),
-                    httpd_userid, &with_time, &without_time);
+        if (!defalarms) {
+            defalarms = xmalloc(sizeof(struct defaultalarms));
+            struct defaultalarms init = DEFAULTALARMS_INITIALIZER;
+            memcpy(defalarms, &init, sizeof(struct defaultalarms));
+            defaultalarms_load(mailbox_name(mailbox), httpd_userid, defalarms);
         }
 
-        /* Add default alerts */
-        icalcomponent_add_defaultalerts(ical, with_time, without_time, 0);
+        defaultalarms_insert(defalarms, ical, 0);
 
-        /* Pass default alerts to caller or free them */
-        if (with_time) {
-            if (alerts_with_timep && *alerts_with_timep == NULL)
-                *alerts_with_timep = with_time;
-            else if (!alerts_with_timep)
-                icalcomponent_free(with_time);
-        }
-
-        if (without_time) {
-            if (alerts_without_timep && *alerts_without_timep == NULL)
-                *alerts_without_timep = without_time;
-            else if (!alerts_without_timep)
-                icalcomponent_free(without_time);
+        /* Pass default alarms to caller or free them */
+        if (defalarms) {
+            if (!defalarmsp) {
+                defaultalarms_fini(defalarms);
+                free(defalarms);
+            }
+            else if (defalarmsp && *defalarmsp == NULL) {
+                *defalarmsp = defalarms;
+            }
         }
     }
 
@@ -2564,7 +2559,7 @@ static int caldav_get(struct transaction_t *txn, struct mailbox *mailbox,
         }
 
         if (!ical) *obj = ical = record_to_ical(mailbox, record, NULL);
-        personalize_and_add_defaultalerts(mailbox, cdata, record, ical, NULL, NULL);
+        personalize_and_add_defaultalarms(mailbox, cdata, record, ical, NULL);
 
 
         /* iCalendar data in response should not be transformed */
@@ -5280,8 +5275,7 @@ static int propfind_caldata(const xmlChar *name, xmlNsPtr ns,
 
     struct caldata_rock {
         char *mboxname;
-        icalcomponent *alerts_withtime;
-        icalcomponent *alerts_withdate;
+        struct defaultalarms *defalarms;
     };
 
     if (!prop) {
@@ -5304,12 +5298,10 @@ static int propfind_caldata(const xmlChar *name, xmlNsPtr ns,
         struct caldata_rock *caldata_rock =
             hash_del((const char*)name, &fctx->per_prop_data);
         if (caldata_rock) {
-            if (caldata_rock->alerts_withtime)
-                icalcomponent_free(caldata_rock->alerts_withtime);
-
-            if (caldata_rock->alerts_withdate)
-                icalcomponent_free(caldata_rock->alerts_withdate);
-
+            if (caldata_rock->defalarms) {
+                defaultalarms_fini(caldata_rock->defalarms);
+                free(caldata_rock->defalarms);
+            }
             free(caldata_rock->mboxname);
             free(caldata_rock);
         }
@@ -5421,23 +5413,18 @@ static int propfind_caldata(const xmlChar *name, xmlNsPtr ns,
         }
         if (strcmpsafe(caldata_rock->mboxname, mailbox_name(fctx->mailbox))) {
             /* Reset default alerts per mailbox */
-            if (caldata_rock->alerts_withtime) {
-                icalcomponent_free(caldata_rock->alerts_withtime);
-                caldata_rock->alerts_withtime = NULL;
-            }
-
-            if (caldata_rock->alerts_withdate) {
-                icalcomponent_free(caldata_rock->alerts_withdate);
-                caldata_rock->alerts_withdate = NULL;
+            if (caldata_rock->defalarms) {
+                defaultalarms_fini(caldata_rock->defalarms);
+                free(caldata_rock->defalarms);
+                caldata_rock->defalarms = NULL;
             }
 
             free(caldata_rock->mboxname);
             caldata_rock->mboxname = xstrdup(mailbox_name(fctx->mailbox));
         }
-        personalize_and_add_defaultalerts(fctx->mailbox,
+        personalize_and_add_defaultalarms(fctx->mailbox,
                 fctx->data, fctx->record, ical,
-                &caldata_rock->alerts_withtime,
-                &caldata_rock->alerts_withdate);
+                &caldata_rock->defalarms);
 
         if (!icaltime_is_null_time(partial->range.start)) {
             /* Expand/limit recurrence set */
@@ -6752,7 +6739,7 @@ static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
         if (set) {
             freeme = xmlNodeGetContent(prop);
             icalstr = (const char *) freeme;
-            caldav_format_defaultalarms_annot(&value, icalstr);
+            defaultalarms_format_annot(&value, icalstr);
         }
 
         buf_reset(&pctx->buf);

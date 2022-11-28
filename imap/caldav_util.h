@@ -66,10 +66,6 @@ extern void replace_tzid_aliases(icalcomponent *ical,
 
 extern void strip_vtimezones(icalcomponent *ical);
 
-extern void add_personal_data(icalcomponent *ical, struct buf *userdata);
-
-extern void add_personal_data_from_dl(icalcomponent *ical, struct dlist *dl);
-
 extern int caldav_is_personalized(struct mailbox *mailbox,
                                   const struct caldav_data *cdata,
                                   const char *userid,
@@ -133,39 +129,6 @@ extern void caldav_rewrite_attachprop_to_url(struct webdav_db *webdavdb,
                                              struct buf *baseurl,
                                              struct buf *bufs);
 
-#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME \
-    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime"
-
-#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE \
-    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date"
-
-#define JMAP_DAV_ANNOT_DEFAULTALERTS_WITH_TIME \
-    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-with-time"
-
-#define JMAP_DAV_ANNOT_DEFAULTALERTS_WITHOUT_TIME \
-    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-without-time"
-
-/* Read the JMAP default alerts for mailbox `mboxname` and `userid`,
- * formatted as iCalendar VALARMS. The VALARMs are wrapped in a
- * XROOT component. Both the output arguments `with_timep` and
- * `without_timep` arguments may be null. If they point to a
- * non-NULL value, then their value is left intact and no default
- * alerts are read. */
-extern void caldav_read_jmap_defaultalerts(const char *mboxname,
-                                           const char *userid,
-                                           icalcomponent **with_timep,
-                                           icalcomponent **without_timep);
-
-/* Read the value of default alert annotation `annot` for mailbox
- * `mboxname` and `userid`. and parse it into its constituent parts.
- * Each of the output arguments guid, content and is_dlist are nullable. */
-extern int caldav_read_defaultalarms_annot(const char *mboxname,
-                                           const char *userid,
-                                           const char *annot,
-                                           struct message_guid *guid,
-                                           struct buf *content,
-                                           int *is_dlist);
-
 /* Bump the modseq of all records in mailbox that contain iCalendar
  * components with enabled default alarms. Also forces calalarmd to
  * recalculate the alarms for these records.
@@ -175,12 +138,11 @@ extern int caldav_read_defaultalarms_annot(const char *mboxname,
  * and rescoped to messages. */
 extern int caldav_bump_defaultalarms(struct mailbox *mailbox);
 
-extern void caldav_format_defaultalarms_annot(struct buf *dst, const char *icalstr);
+extern int caldav_get_usedefaultalerts(struct dlist *dl,
+                                       struct mailbox *mailbox,
+                                       const struct index_record *record,
+                                       icalcomponent **icalp);
 
-extern int caldav_usedefaultalerts(struct dlist *dl,
-                                   struct mailbox *mailbox,
-                                   const struct index_record *record,
-                                   icalcomponent **icalp);
 
 extern icaltimezone *caldav_get_calendar_tz(const char *mboxname, const char *userid);
 
