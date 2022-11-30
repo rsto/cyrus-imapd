@@ -43,7 +43,7 @@ EOF
 
     xlog $self, "Remove JMAP default alert annotation from calendar";
     $imap->setmetadata('#calendars.Default',
-        '/private/vendor/cmu/cyrus-httpd/<urn:ietf:params:jmap:calendars>defaultalerts-with-time', '');
+        '/private/vendor/cmu/cyrus-httpd/<urn:ietf:params:jmap:calendars>defaultalerts', '');
     $self->assert_str_equals('ok', $imap->get_last_completion_response());
 
     xlog $self, "Assert JMAP default alarms are read from CalDAV alarms";

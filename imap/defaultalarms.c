@@ -3,136 +3,234 @@
 #include "bsearch.h"
 #include "caldav_util.h"
 #include "defaultalarms.h"
+#include "syslog.h"
 
-HIDDEN int defaultalarms_read_annot(const char *mboxname,
-                                           const char *userid,
-                                           const char *annot,
-                                           struct message_guid *guid,
-                                           struct buf *content,
-                                           int *is_dlistp)
+#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME \
+    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime"
+
+#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE \
+    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date"
+
+#define JMAP_ANNOT_DEFAULTALERTS \
+    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts"
+
+EXPORTED void defaultalarms_fini(struct defaultalarms *defalarms)
 {
-    struct buf mybuf = BUF_INITIALIZER;
-    annotatemore_lookup(mboxname, annot, userid, &mybuf);
-
-    if (!buf_len(&mybuf))
-        return CYRUSDB_NOTFOUND;
-
-    if (buf_len(&mybuf)) {
-        struct dlist *dl = NULL;
-        if (dlist_parsemap(&dl, 1, 0, buf_base(&mybuf), buf_len(&mybuf)) == 0) {
-            if (content) {
-                const char *val = NULL;
-                if (dlist_getatom(dl, "CONTENT", &val)) {
-                    buf_setcstr(content, val);
-                }
-            }
-            if (guid) {
-                const char *guidrep = NULL;
-                dlist_getatom(dl, "GUID", &guidrep);
-                if (guidrep) {
-                    message_guid_decode(guid, guidrep);
-                }
-            }
-            if (is_dlistp) {
-                *is_dlistp = 1;
-            }
+    if (defalarms) {
+        if (defalarms->with_time.ical) {
+            icalcomponent_free(defalarms->with_time.ical);
+            defalarms->with_time.ical = NULL;
         }
-        else {
-            /* This is just the VALARM iCalendar string */
-            if (guid) {
-                message_guid_generate(guid, mybuf.s, mybuf.len);
-            }
-            if (content) {
-                buf_copy(content, &mybuf);
-            }
-            if (is_dlistp) {
-                *is_dlistp = 0;
-            }
+
+        if (defalarms->with_date.ical) {
+            icalcomponent_free(defalarms->with_date.ical);
+            defalarms->with_date.ical = NULL;
         }
-        dlist_free(&dl);
+
+        message_guid_set_null(&defalarms->with_time.guid);
+        message_guid_set_null(&defalarms->with_date.guid);
+    }
+}
+
+static int get_alarms_dl(struct dlist *root, const char *name,
+                         icalcomponent **icalp,
+                         struct message_guid *guid)
+{
+    struct dlist *dl = NULL;
+    if (!dlist_getlist(root, name, &dl))
+        return 0;
+
+    const char *content = NULL;
+    if (!dlist_getatom(dl, "CONTENT", &content))
+        return 0;
+
+    if (*content) {
+        *icalp = icalparser_parse_string(content);
+        if (*icalp == NULL)
+            return 0;
     }
 
-    buf_free(&mybuf);
+    const char *guidrep = NULL;
+    if (!dlist_getatom(dl, "GUID", &guidrep))
+        return 0;
+
+    message_guid_decode(guid, guidrep);
+
+    return 1;
+}
+
+static int load_legacy_alarms(const char *mboxname,
+                              const char *userid,
+                              const char *annot,
+                              icalcomponent **icalp,
+                              struct message_guid *guid,
+                              struct buf *buf)
+{
+    buf_reset(buf);
+
+    int r = annotatemore_lookupmask(mboxname, annot, userid, buf);
+    if (r && r != CYRUSDB_NOTFOUND) return r;
+
+    buf_trim(buf);
+    if (!buf_len(buf))
+        return 0;
+
+    const char *content = NULL;
+    const char *guidrep = NULL;
+
+    struct dlist *dl = NULL;
+    if (!dlist_parsemap(&dl, 1, 0, buf_base(buf), buf_len(buf))) {
+        if (!dlist_getatom(dl, "CONTENT", &content))
+            return CYRUSDB_IOERROR;
+
+        if (!dlist_getatom(dl, "GUID", &guidrep))
+            return CYRUSDB_IOERROR;
+    }
+    else {
+        content = buf_cstring(buf);
+    }
+
+    if (*content) {
+        icalcomponent *alarms = icalparser_parse_string(content);
+        if (alarms) {
+            if (icalcomponent_isa(alarms) == ICAL_VALARM_COMPONENT) {
+                icalcomponent *myalarms = alarms;
+                myalarms = icalcomponent_new(ICAL_XROOT_COMPONENT);
+                icalcomponent_add_component(myalarms,
+                        icalcomponent_clone(alarms));
+                alarms = myalarms;
+            }
+            *icalp = alarms;
+        }
+
+        if (guidrep) {
+            message_guid_decode(guid, guidrep);
+        }
+        else {
+            message_guid_generate(guid, content, strlen(content));
+        }
+    }
+
+    dlist_free(&dl);
     return 0;
 }
 
-
-static int load_alarms(const char *mboxname, const char *userid,
-                       const char *annot, const char *fallback_annot,
-                       icalcomponent **alarmsp)
+EXPORTED int defaultalarms_load(const char *mboxname,
+                                const char *userid,
+                                struct defaultalarms *defalarms)
 {
-    icalcomponent *ical = NULL;
+    static const char *annot = JMAP_ANNOT_DEFAULTALERTS;
     struct buf buf = BUF_INITIALIZER;
-    *alarmsp = NULL;
+    defaultalarms_fini(defalarms);
 
-    int r = defaultalarms_read_annot(mboxname,
-            userid, annot, NULL, &buf, NULL);
+    int r = annotatemore_lookup(mboxname, annot, userid, &buf);
+    if (!r && buf_len(&buf)) {
+        struct dlist *root;
+        if (!dlist_parsemap(&root, 1, 0, buf_base(&buf), buf_len(&buf))) {
+            if (!get_alarms_dl(root, "WITH_TIME",
+                &defalarms->with_time.ical, &defalarms->with_time.guid) ||
+                !get_alarms_dl(root, "WITH_DATE",
+                &defalarms->with_date.ical, &defalarms->with_date.guid)) {
 
-    if (r == CYRUSDB_NOTFOUND && fallback_annot) {
+                xsyslog(LOG_ERR, "corrupt default alarm annotation value",
+                        "mboxname=<%s> userid=<%s> annot=<%s> value=<%s>",
+                        mboxname, userid, annot, buf_cstring(&buf));
+
+                defaultalarms_fini(defalarms);
+            }
+        }
+    }
+    else {
         // Any new JMAP calendar should at least have the zero
         // value set in their default alarm annotation. If there
         // is no annotation set, this indicates that this user's
         // calendars did not get migrated to JMAP calendar default
         // alerts. Fall back reading their CalDAV alarms.
-        buf_reset(&buf);
-        r = defaultalarms_read_annot(mboxname,
-                userid, fallback_annot, NULL, &buf, NULL);
-    }
+        if (load_legacy_alarms(mboxname, userid,
+                    CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME,
+                    &defalarms->with_time.ical,
+                    &defalarms->with_time.guid, &buf) ||
+            load_legacy_alarms(mboxname, userid,
+                    CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE,
+                    &defalarms->with_date.ical,
+                    &defalarms->with_date.guid, &buf)) {
 
-    if (r || !buf_len(&buf))
-        goto done;
-
-    ical = icalparser_parse_string(buf_cstring(&buf));
-    if (ical) {
-        if (icalcomponent_isa(ical) == ICAL_VALARM_COMPONENT) {
-            // libical wraps multiple VALARMs in a XROOT,
-            // so do the same for a single VALARM
-            icalcomponent *root = icalcomponent_new(ICAL_XROOT_COMPONENT);
-            icalcomponent_add_component(root, ical);
-            ical = root;
+            defaultalarms_fini(defalarms);
         }
     }
-    *alarmsp = ical;
+
+    if (!defalarms->with_time.ical && !defalarms->with_date.ical) {
+        defaultalarms_fini(defalarms);
+        if (!r) r = CYRUSDB_NOTFOUND;
+    }
+
+    return r;
+}
+
+static void set_alarms_dl(struct dlist *root, const char *name,
+                          icalcomponent *alarms, struct buf *buf)
+{
+    struct message_guid guid = MESSAGE_GUID_INITIALIZER;
+    buf_reset(buf);
+
+    struct dlist *dl = dlist_newkvlist(root, name);
+
+    if (alarms) {
+        icalcomponent *myalarms = alarms;
+        if (icalcomponent_isa(alarms) == ICAL_VALARM_COMPONENT) {
+            myalarms = icalcomponent_new(ICAL_XROOT_COMPONENT);
+            icalcomponent_add_component(myalarms,
+                    icalcomponent_clone(alarms));
+        }
+
+        if (icalcomponent_get_first_component(myalarms, ICAL_VALARM_COMPONENT)) {
+            buf_setcstr(buf, icalcomponent_as_ical_string(myalarms));
+            message_guid_generate(&guid, buf_base(buf), buf_len(buf));
+        }
+
+        if (myalarms != alarms)
+            icalcomponent_free(myalarms);
+    }
+
+    dlist_setatom(dl, "CONTENT", buf_cstring(buf));
+    dlist_setatom(dl, "GUID", message_guid_encode(&guid));
+}
+
+EXPORTED int defaultalarms_save(struct mailbox *mailbox,
+                                const char *userid,
+                                icalcomponent *with_time,
+                                icalcomponent *with_date)
+{
+    struct dlist *root = dlist_newkvlist(NULL, "DEFAULTALARMS");
+    struct buf buf = BUF_INITIALIZER;
+
+    set_alarms_dl(root, "WITH_TIME", with_time, &buf);
+    set_alarms_dl(root, "WITH_DATE", with_date, &buf);
+
+    buf_reset(&buf);
+    dlist_printbuf(root, 1, &buf);
+
+    static const char *annot = JMAP_ANNOT_DEFAULTALERTS;
+    annotate_state_t *astate;
+    int r = mailbox_get_annotate_state(mailbox, 0, &astate);
+    if (r) {
+        xsyslog(LOG_ERR, "failed to get annotation state",
+                "mboxname=<%s> err=<%s>",
+                mailbox_name(mailbox), error_message(r));
+        goto done;
+    }
+
+    r = annotate_state_write(astate, annot, userid, &buf);
+    if (r) {
+        xsyslog(LOG_ERR, "failed to write annotation",
+                "annot=<%s> err=<%s>", annot, error_message(r));
+        goto done;
+    }
 
 done:
+    dlist_free(&root);
     buf_free(&buf);
     return r;
-}
-
-
-EXPORTED int defaultalarms_load(const char *mboxname,
-                                const char *userid,
-                                struct defaultalarms *alarms)
-{
-    int r = load_alarms(mboxname, userid,
-            JMAP_ANNOT_DEFAULTALERTS_WITH_TIME,
-            CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME,
-            &alarms->with_time);
-
-    if (!r) {
-        r = load_alarms(mboxname, userid,
-                JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
-                CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE,
-                &alarms->with_date);
-    }
-
-    return r;
-}
-
-EXPORTED void defaultalarms_format_annot(struct buf *dst, const char *icalstr)
-{
-    struct dlist *dl = dlist_newkvlist(NULL, "DEFAULTALARMS");
-    struct message_guid guid;
-    if (*icalstr) {
-        message_guid_generate(&guid, icalstr, strlen(icalstr));
-    }
-    else {
-        message_guid_set_null(&guid);
-    }
-    dlist_setatom(dl, "CONTENT", icalstr);
-    dlist_setatom(dl, "GUID", message_guid_encode(&guid));
-    dlist_printbuf(dl, 1, dst);
-    dlist_free(&dl);
 }
 
 static void init_alarms(icalcomponent *alarms)
@@ -353,14 +451,14 @@ static void merge_alarms(icalcomponent *comp, icalcomponent *alarms)
 EXPORTED void defaultalarms_insert(struct defaultalarms *alarms,
                                    icalcomponent *ical, int force)
 {
-    if (!alarms || (!alarms->with_time && !alarms->with_date))
+    if (!alarms || (!alarms->with_time.ical && !alarms->with_date.ical))
         return;
 
-    if (alarms->with_time)
-        init_alarms(alarms->with_time);
+    if (alarms->with_time.ical)
+        init_alarms(alarms->with_time.ical);
 
-    if (alarms->with_date)
-        init_alarms(alarms->with_date);
+    if (alarms->with_date.ical)
+        init_alarms(alarms->with_date.ical);
 
     icalcomponent *comp = icalcomponent_get_first_real_component(ical);
     icalcomponent_kind kind = icalcomponent_isa(comp);
@@ -384,18 +482,8 @@ EXPORTED void defaultalarms_insert(struct defaultalarms *alarms,
         }
         else is_date = icalcomponent_get_dtstart(comp).is_date;
 
-        merge_alarms(comp, is_date ?  alarms->with_date : alarms->with_time);
-    }
-}
-
-EXPORTED void defaultalarms_fini(struct defaultalarms *defalarms)
-{
-    if (defalarms) {
-        if (defalarms->with_time)
-            icalcomponent_free(defalarms->with_time);
-
-        if (defalarms->with_date)
-            icalcomponent_free(defalarms->with_date);
+        merge_alarms(comp, is_date ?
+                alarms->with_date.ical : alarms->with_time.ical);
     }
 }
 

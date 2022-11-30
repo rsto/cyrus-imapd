@@ -46,47 +46,32 @@
 
 #include <libical/ical.h>
 
-#include "caldav_db.h"
 #include "dav_util.h"
-#include "hash.h"
-#include "httpd.h"
 #include "mailbox.h"
-#include "strarray.h"
 
-#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME \
-    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-datetime"
-
-#define CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE \
-    DAV_ANNOT_NS "<" XML_NS_CALDAV ">default-alarm-vevent-date"
-
-#define JMAP_ANNOT_DEFAULTALERTS_WITH_TIME \
-    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-with-time"
-
-#define JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME \
-    DAV_ANNOT_NS "<" XML_NS_JMAPCAL ">defaultalerts-without-time"
-
-#define DEFAULTALARMS_INITIALIZER {0}
+#define DEFAULTALARMS_INITIALIZER {{0},{0}}
 
 struct defaultalarms {
-    icalcomponent *with_time;
-    icalcomponent *with_date;
+    struct {
+        icalcomponent *ical;
+        struct message_guid guid;
+    } with_time;
+    struct {
+        icalcomponent *ical;
+        struct message_guid guid;
+    } with_date;
 };
 
 extern int defaultalarms_load(const char *mboxname, const char *userid,
                               struct defaultalarms *alarms);
 
-extern void defaultalarms_insert(struct defaultalarms *alarms,
-                                 icalcomponent *ical, int force);
+extern int defaultalarms_save(struct mailbox *mbox, const char *userid,
+                              icalcomponent *with_time,
+                              icalcomponent *with_date);
 
 extern void defaultalarms_fini(struct defaultalarms *alarms);
 
-extern int defaultalarms_read_annot(const char *mboxname,
-                                           const char *userid,
-                                           const char *annot,
-                                           struct message_guid *guid,
-                                           struct buf *content,
-                                           int *is_dlist);
-
-extern void defaultalarms_format_annot(struct buf *dst, const char *icalstr);
+extern void defaultalarms_insert(struct defaultalarms *alarms,
+                                 icalcomponent *ical, int force);
 
 #endif /* DEFAULTALARMS_H */

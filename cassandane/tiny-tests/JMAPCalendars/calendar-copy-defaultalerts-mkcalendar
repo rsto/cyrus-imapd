@@ -122,7 +122,7 @@ sub test_calendar_copy_defaultalerts_mkcalendar
     xlog $self, "Create calendar test3 over CalDAV";
     $res = $caldav->Request('MKCALENDAR', "/dav/calendars/user/cassandane/test3");
 
-    xlog $self, "New calendar inherits default alerts with time from Default, without time any of test1 or test2";
+    xlog $self, "New calendar inherits default alerts from Default";
     $res = $jmap->CallMethods([
         ['Calendar/get', {
             ids => ['test3'],
@@ -134,6 +134,5 @@ sub test_calendar_copy_defaultalerts_mkcalendar
     ]);
     $self->assert_deep_equals($defaultAlertsWithTime2,
         $res->[0][1]{list}[0]{defaultAlertsWithTime});
-    $self->assert_deep_equals($defaultAlertsWithoutTime1,
-        $res->[0][1]{list}[0]{defaultAlertsWithoutTime});
+    $self->assert_null($res->[0][1]{list}[0]{defaultAlertsWithoutTime});
 }

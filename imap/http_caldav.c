@@ -274,9 +274,6 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop, xmlNodePtr resp,
                                  struct propstat propstat[], void *rock);
-static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
-                                  struct proppatch_ctx *pctx,
-                                  struct propstat propstat[], void *rock);
 static int propfind_shareesactas(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop, xmlNodePtr resp,
@@ -574,10 +571,10 @@ static const struct prop_entry caldav_props[] = {
     /* Apple Default Alarm properties */
     { "default-alarm-vevent-datetime", NS_CALDAV,
       PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_defaultalarm, NULL },
+      propfind_defaultalarm, proppatch_todb, NULL },
     { "default-alarm-vevent-date", NS_CALDAV,
       PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_defaultalarm, NULL },
+      propfind_defaultalarm, proppatch_todb, NULL },
 
 
     /* JMAP calendar properties */
@@ -6681,18 +6678,25 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
     const char *val = buf_cstring(&attrib);
     size_t len = buf_len(&attrib);
 
-    /* Try to parse as dlist - we switched from storing the raw
-     * iCalendar payload to dlist for JMAP calendar alerts.
-     * Now that we store JMAP calendar alerts in a different
-     * annotation, this isn't strictly necessary for Apple's
-     * CalDAV properties anymore. But let's keep the format
-     * of both annotations in sync. */
+    /* Try to parse as dlist - an experimental Cyrus version
+     * stored JMAP default alerts and Apple CalDAV default alarms
+     * in the same annotation, formatted as a dlist.
+     * Now, CalDAV default alarms are stored as any other dead
+     * DAV property again. */
     struct dlist *dl = NULL;
     if (dlist_parsemap(&dl, 1, 0, buf_base(&attrib), buf_len(&attrib)) == 0) {
         const char *content = NULL;
         if (dlist_getatom(dl, "CONTENT", &content)) {
-            val = content;
-            len = strlen(content);
+            icalcomponent *ical = icalparser_parse_string(content);
+            if (ical) {
+                if (icalcomponent_isa(ical) == ICAL_VALARM_COMPONENT ||
+                        icalcomponent_get_first_component(ical,
+                            ICAL_VALARM_COMPONENT)) {
+                    val = content;
+                    len = strlen(content);
+                }
+                icalcomponent_free(ical);
+            }
         }
     }
 
@@ -6720,56 +6724,6 @@ static int proppatch_forbidden(xmlNodePtr prop,
                  &propstat[PROPSTAT_FORBID], prop->name, prop->ns, NULL, 0);
 
     *pctx->ret = HTTP_FORBIDDEN;
-
-    return 0;
-}
-
-/* Callback to write {CALDAV}default-alarm-vevent-date[time] */
-static int proppatch_defaultalarm(xmlNodePtr prop, unsigned set,
-                                  struct proppatch_ctx *pctx,
-                                  struct propstat propstat[],
-                                  void *rock __attribute__((unused)))
-{
-    if (pctx->txn->req_tgt.collection ||
-            (pctx->txn->req_tgt.userid && !pctx->txn->req_tgt.resource)) {
-        xmlChar *freeme = NULL;
-        const char *icalstr = "";
-        struct buf value = BUF_INITIALIZER;
-
-        if (set) {
-            freeme = xmlNodeGetContent(prop);
-            icalstr = (const char *) freeme;
-            defaultalarms_format_annot(&value, icalstr);
-        }
-
-        buf_reset(&pctx->buf);
-        buf_printf(&pctx->buf, DAV_ANNOT_NS "<%s>%s",
-                (const char *) prop->ns->href, prop->name);
-
-        annotate_state_t *astate = NULL;
-        int r = mailbox_get_annotate_state(pctx->mailbox, 0, &astate);
-
-        if (!r) r = annotate_state_write(astate, buf_cstring(&pctx->buf),
-                httpd_userid, &value);
-
-        if (!r) {
-            xml_add_prop(HTTP_OK, pctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
-                    prop->name, prop->ns, NULL, 0);
-        }
-        else {
-            xml_add_prop(HTTP_SERVER_ERROR, pctx->ns[NS_DAV],
-                    &propstat[PROPSTAT_ERROR], prop->name, prop->ns, NULL, 0);
-        }
-
-        if (freeme) xmlFree(freeme);
-        buf_free(&value);
-    }
-    else {
-        xml_add_prop(HTTP_FORBIDDEN, pctx->ns[NS_DAV],
-                &propstat[PROPSTAT_FORBID], prop->name, prop->ns, NULL, 0);
-
-        *pctx->ret = HTTP_FORBIDDEN;
-    }
 
     return 0;
 }

@@ -141,24 +141,20 @@ static void add_defaultalarm_etagdata(const char *mboxname,
                                       const char *userid,
                                       struct buf *etagdata)
 {
-    struct message_guid withtime_guid = MESSAGE_GUID_INITIALIZER;
-    defaultalarms_read_annot(mboxname, userid,
-            JMAP_ANNOT_DEFAULTALERTS_WITH_TIME,
-            &withtime_guid, NULL, NULL);
-    if (!message_guid_isnull(&withtime_guid)) {
-        buf_appendcstr(etagdata, message_guid_encode(&withtime_guid));
+    struct defaultalarms defalarms = DEFAULTALARMS_INITIALIZER;
+    if (!defaultalarms_load(mboxname, userid, &defalarms)) {
+        if (!message_guid_isnull(&defalarms.with_time.guid)) {
+            buf_appendcstr(etagdata,
+                    message_guid_encode(&defalarms.with_time.guid));
+        }
+        if (!message_guid_isnull(&defalarms.with_date.guid)) {
+            buf_appendcstr(etagdata,
+                    message_guid_encode(&defalarms.with_date.guid));
+        }
+        // XXX not strictly necessary if default alarms are sane
+        buf_appendbit64(etagdata, record->modseq);
+        defaultalarms_fini(&defalarms);
     }
-
-    struct message_guid withdate_guid = MESSAGE_GUID_INITIALIZER;
-    defaultalarms_read_annot(mboxname, userid,
-            JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
-            &withdate_guid, NULL, NULL);
-    if (!message_guid_isnull(&withdate_guid)) {
-        buf_appendcstr(etagdata, message_guid_encode(&withdate_guid));
-    }
-
-    // XXX not strictly necessary if default alarms are sane
-    buf_appendbit64(etagdata, record->modseq);
 }
 
 EXPORTED int caldav_get_validators(struct mailbox *mailbox, void *data,
@@ -1787,26 +1783,16 @@ HIDDEN void caldav_attachment_url(struct buf *buf,
 
 #ifdef WITH_JMAP
 
-struct copy_defaultalerts_rock {
-    annotate_state_t *astate;
-    struct buf buf[2];
-    struct {
-        const char *annot;
-        int did_copy;
-    } alerts[2];
-    struct mailbox *mailbox;
+struct copy_defaultalarms_rock {
+    struct defaultalarms defalarms;
     const char *userid;
 };
 
-static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
+static int copy_defaultalarms_cb(const mbentry_t *mbentry, void *vrock)
 {
-    struct copy_defaultalerts_rock *rock = vrock;
-    int r = 0;
+    struct copy_defaultalarms_rock *rock = vrock;
 
     if (mbtype_isa(mbentry->mbtype) != MBTYPE_CALENDAR)
-        return 0;
-
-    if (!strcmpsafe(mbentry->name, mailbox_name(rock->mailbox)))
         return 0;
 
     mbname_t *mbname = mbname_from_intname(mbentry->name);
@@ -1815,128 +1801,59 @@ static int copy_defaultalerts_cb(const mbentry_t *mbentry, void *vrock)
     if (!strncmp(collname, SCHED_INBOX, strlen(SCHED_INBOX)-1) ||
         !strncmp(collname, SCHED_OUTBOX, strlen(SCHED_OUTBOX)-1) ||
         !strncmp(collname, MANAGED_ATTACH, strlen(MANAGED_ATTACH)-1)) {
+        mbname_free(&mbname);
         return 0;
     }
-
-    for (int i = 0; i < 2; i++) {
-        if (!rock->alerts[i].did_copy) {
-            const char *annot = rock->alerts[i].annot;
-            struct buf *icalbuf = &rock->buf[0];
-            buf_reset(icalbuf);
-            struct buf *annotval = &rock->buf[1];
-            buf_reset(annotval);
-
-            r = defaultalarms_read_annot(mbentry->name,
-                    rock->userid, annot, NULL, icalbuf, NULL);
-
-            if (r) {
-                if (r != CYRUSDB_NOTFOUND) {
-                    xsyslog(LOG_WARNING, "failed to read annotation",
-                            "mboxname=<%s> annot=<%s> err=<%s>",
-                            mbentry->name, annot, cyrusdb_strerror(r));
-                }
-                r = 0;
-                continue; // ignore
-            }
-
-            if (buf_len(icalbuf)) {
-                defaultalarms_format_annot(annotval,
-                        buf_cstring(icalbuf));
-
-                r = annotate_state_write(rock->astate,
-                        annot, rock->userid, annotval);
-                rock->alerts[i].did_copy = !r;
-
-                if (r) {
-                    xsyslog(LOG_ERR, "failed to write annotation",
-                            "mboxname=<%s> annot=<%s> err=<%s>",
-                            mbentry->name, annot, cyrusdb_strerror(r));
-                    break;
-                }
-            }
-        }
-    }
-
     mbname_free(&mbname);
 
-    if (!r && rock->alerts[0].did_copy && rock->alerts[1].did_copy)
-        r = CYRUSDB_DONE;
+    if (!defaultalarms_load(mbentry->name, rock->userid, &rock->defalarms)) {
+        return CYRUSDB_DONE;
+    }
 
-    return r;
+    return 0;
 }
 
 HIDDEN int caldav_init_jmapcalendar(const char *userid, struct mailbox *mailbox)
 {
-    // Copy default alerts to new calendar
-    annotate_state_t *astate = NULL;
-    int r = mailbox_get_annotate_state(mailbox, 0, &astate);
-    if (r) return r;
-
-    struct copy_defaultalerts_rock rock = {
-        .astate = astate,
-        .alerts = {{
-            .annot = JMAP_ANNOT_DEFAULTALERTS_WITH_TIME,
-        }, {
-            .annot = JMAP_ANNOT_DEFAULTALERTS_WITHOUT_TIME,
-        }},
-        .mailbox = mailbox,
-        .userid = userid,
+    struct copy_defaultalarms_rock rock = {
+        DEFAULTALARMS_INITIALIZER, userid
     };
 
-
     // Attempt to copy default alerts from scheduling default
+    int r = 0;
     char *defaultcoll = caldav_scheddefault(userid, 1);
     if (defaultcoll) {
         char *mboxname = caldav_mboxname(userid, defaultcoll);
         mbentry_t *mbentry;
         if (!mboxlist_lookup(mboxname, &mbentry, NULL)) {
-            r = copy_defaultalerts_cb(mbentry, &rock);
+            r = copy_defaultalarms_cb(mbentry, &rock);
         }
         mboxlist_entry_free(&mbentry);
         free(mboxname);
         free(defaultcoll);
     }
 
-    if (!r) {
-        // Otherwise copy from any calendar that has default alerts
-        if (!rock.alerts[0].did_copy || !rock.alerts[1].did_copy) {
-            char *calhomename = caldav_mboxname(userid, NULL);
-            r = mboxlist_mboxtree(calhomename, copy_defaultalerts_cb,
-                    &rock, MBOXTREE_SKIP_ROOT);
-            free(calhomename);
-        }
+    if (r != CYRUSDB_DONE) {
+        // Copy from any calendar that has default alerts
+        char *calhomename = caldav_mboxname(userid, NULL);
+        r = mboxlist_mboxtree(calhomename, copy_defaultalarms_cb,
+                &rock, MBOXTREE_SKIP_ROOT);
+        free(calhomename);
     }
 
-    // If there are no default alerts, initialize the annotation
-    // to zero. This allows to identify if a user never got their
-    // default alerts migrated from CalDAV to JMAP.
-    for (int i = 0; i < 2; i++) {
-        if (!rock.alerts[i].did_copy) {
-            const char *annot = rock.alerts[i].annot;
-            struct buf *annotval = &rock.buf[0];
-            buf_reset(annotval);
-
-            defaultalarms_format_annot(annotval, "");
-
-            r = annotate_state_write(rock.astate,
-                    annot, userid,annotval);
-
-            rock.alerts[i].did_copy = !r;
-
-            if (r) {
-                xsyslog(LOG_WARNING, "failed to write annotation",
-                        "mboxname=<%s> annot=<%s> err=<%s>",
-                        mailbox_name(mailbox), annot, cyrusdb_strerror(r));
-                r = 0;
-            }
-        }
-    }
-
-    if (r == CYRUSDB_DONE)
+    // Always write default alerts, even if there are none
+    r = defaultalarms_save(mailbox, userid,
+            rock.defalarms.with_time.ical,
+            rock.defalarms.with_date.ical);
+    if (r) {
+        xsyslog(LOG_WARNING, "failed to write default alarms",
+                "mboxname=<%s> err=<%s>",
+                mailbox_name(mailbox), cyrusdb_strerror(r));
         r = 0;
+    }
 
-    buf_free(&rock.buf[0]);
-    buf_free(&rock.buf[1]);
+    defaultalarms_fini(&rock.defalarms);
+
     return r;
 }
 
