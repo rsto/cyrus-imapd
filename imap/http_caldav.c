@@ -270,7 +270,7 @@ static int propfind_sharingmodes(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop, xmlNodePtr resp,
                                  struct propstat propstat[], void *rock);
-static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
+static int propfind_caldav_alarms(const xmlChar *name, xmlNsPtr ns,
                                  struct propfind_ctx *fctx,
                                  xmlNodePtr prop, xmlNodePtr resp,
                                  struct propstat propstat[], void *rock);
@@ -571,10 +571,10 @@ static const struct prop_entry caldav_props[] = {
     /* Apple Default Alarm properties */
     { "default-alarm-vevent-datetime", NS_CALDAV,
       PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_todb, NULL },
+      propfind_caldav_alarms, proppatch_todb, NULL },
     { "default-alarm-vevent-date", NS_CALDAV,
       PROP_COLLECTION | PROP_PERUSER,
-      propfind_defaultalarm, proppatch_todb, NULL },
+      propfind_caldav_alarms, proppatch_todb, NULL },
 
 
     /* JMAP calendar properties */
@@ -6652,12 +6652,12 @@ static int propfind_sharingmodes(const xmlChar *name, xmlNsPtr ns,
 }
 
 /* Callback to fetch {CALDAV}default-alarm-vevent-date[time] */
-static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
-                                 struct propfind_ctx *fctx,
-                                 xmlNodePtr prop __attribute__((unused)),
-                                 xmlNodePtr resp __attribute__((unused)),
-                                 struct propstat propstat[],
-                                 void *rock __attribute__((unused)))
+static int propfind_caldav_alarms(const xmlChar *name, xmlNsPtr ns,
+                                  struct propfind_ctx *fctx,
+                                  xmlNodePtr prop __attribute__((unused)),
+                                  xmlNodePtr resp __attribute__((unused)),
+                                  struct propstat propstat[],
+                                  void *rock __attribute__((unused)))
 {
     struct buf attrib = BUF_INITIALIZER;
     xmlNodePtr node;
@@ -6668,7 +6668,7 @@ static int propfind_defaultalarm(const xmlChar *name, xmlNsPtr ns,
                (const char *) ns->href, name);
 
     if (fctx->mbentry && !fctx->record) {
-        r = annotatemore_lookup(fctx->mbentry->name,
+        r = annotatemore_lookupmask(fctx->mbentry->name,
                 buf_cstring(&fctx->buf), httpd_userid, &attrib);
     }
 
