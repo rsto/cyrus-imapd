@@ -5367,13 +5367,12 @@ sub test_mailbox_set_create_specialuse_nochildren
         }
     }, "R1"]]);
 
-    xlog "XXX res: " . Dumper $res;
     $self->assert_not_null($res->[0][1]->{notUpdated}->{$trash_id});
     $self->assert_null($res->[0][1]->{updated});
-
-    # XXX what error should this be?
-    $self->assert_deep_equals({ $trash_id => { type => 'forbidden' } },
-                              $res->[0][1]->{notUpdated});
+    $self->assert_str_equals('invalidProperties',
+        $res->[0][1]->{notUpdated}{$trash_id}{type});
+    $self->assert_deep_equals(['role'],
+        $res->[0][1]->{notUpdated}{$trash_id}{properties});
 }
 
 1;
