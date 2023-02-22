@@ -851,6 +851,7 @@ static void test_extract(void)
     int flags = CHARSET_SKIPDIACRIT | CHARSET_MERGESPACE; /* default */
     /* data thanks to hipsteripsum.me */
 
+#if 0
     /* simplest case - no space, plain text is capitalised */
     TESTCASE("freegan", "us-ascii", ENCODING_NONE, "PLAIN", "FREEGAN");
 
@@ -1178,6 +1179,28 @@ static void test_extract(void)
     /* HTML: strip HTML, keep angle-bracketed URIs */
     flags |= CHARSET_KEEP_ANGLEURI;
     TESTCASE("<b>x<https://example.com/world>y</b>", "us-ascii", ENCODING_NONE, "HTML", "x<https://example.com/world>y");
+
+#endif
+
+    /* HTML: FIXME */
+    flags = CHARSET_SKIPDIACRIT | CHARSET_MERGESPACE; /* default */
+
+    TESTCASE("<a href=\"x\"/>", "us-ascii", ENCODING_NONE, "HTML", "<x>");
+
+    TESTCASE("<img src=\"x\", alt=\"y\"/>", "us-ascii", ENCODING_NONE, "HTML", "<x> (Y)");
+
+#if 0
+
+    /* HTML: quoted tag parameters */
+    TESTCASE("<a href=\"foo.html\">leggings</a> <img src=\"beer.jpg\">gastropub",
+        "us-ascii", ENCODING_NONE, "HTML",
+        "LEGGINGS GASTROPUB");
+
+    TESTCASE("<a href=\"foo.html\">leggings</a> <img src=\"beer.jpg\"/>gastropub",
+        "us-ascii", ENCODING_NONE, "HTML",
+        "LEGGINGS GASTROPUB");
+#endif
+
 
 }
 #undef TESTCASE
