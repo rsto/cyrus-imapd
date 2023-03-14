@@ -1009,6 +1009,8 @@ imap_libcyrus_imap_la_SOURCES = \
 	imap/annotate.h \
 	imap/append.c \
 	imap/append.h \
+	imap/attachextract.c \
+	imap/attachextract.h \
 	imap/backend.c \
 	imap/backend.h \
 	imap/conversations.c \

@@ -109,6 +109,7 @@
 #include "sync_log.h"
 #include "sync_support.h"
 #include "telemetry.h"
+#include "attachextract.h"
 #include "tls.h"
 #include "user.h"
 #include "userdeny.h"
@@ -886,7 +887,7 @@ static void imapd_reset(void)
     disable_referrals = 0;
     supports_referrals = 0;
 
-    index_text_extractor_destroy();
+    attachextract_destroy();
 
     event_groups_free(&notify_event_groups);
     if (idle_sock != PROT_NO_FD)
@@ -1137,7 +1138,7 @@ int service_main(int argc __attribute__((unused)),
     mboxname_init_namespace(&imapd_namespace, NAMESPACE_OPTION_ADMIN);
     mboxevent_setnamespace(&imapd_namespace);
 
-    index_text_extractor_init(imapd_in);
+    attachextract_init(imapd_in);
 
     cmdloop();
 
@@ -1241,7 +1242,7 @@ void shut_down(int code)
     ptrarray_fini(&backend_cached);
     if (mupdate_h) mupdate_disconnect(&mupdate_h);
 
-    index_text_extractor_destroy();
+    attachextract_destroy();
 
     event_groups_free(&notify_event_groups);
     if (idle_sock != PROT_NO_FD)
