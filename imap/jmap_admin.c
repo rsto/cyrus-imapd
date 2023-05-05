@@ -463,7 +463,11 @@ static int migrate_defaultalarms(const mbentry_t *mbentry, void *vrock)
     }
 
     if (did_migrate) {
-        json_array_append_new(rock->migrated, json_string(mbentry->name));
+        mbname_t *mbname = mbname_from_intname(mbentry->name);
+        const strarray_t *boxes = mbname_boxes(mbname);
+        const char *id = strarray_nth(boxes, boxes->count-1);
+        json_array_append_new(rock->migrated, json_string(id));
+        mbname_free(&mbname);
     }
 
 done:

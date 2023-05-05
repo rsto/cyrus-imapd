@@ -246,9 +246,10 @@ static int load_legacy_alarms(const char *mboxname,
     return 0;
 }
 
-EXPORTED int defaultalarms_load(const char *mboxname,
-                                const char *userid,
-                                struct defaultalarms *defalarms)
+static int load_alarms(const char *mboxname,
+                       const char *userid,
+                       enum internalize_flags legacy_flags,
+                       struct defaultalarms *defalarms)
 {
     struct buf buf = BUF_INITIALIZER;
     defaultalarms_fini(defalarms);
@@ -279,14 +280,12 @@ EXPORTED int defaultalarms_load(const char *mboxname,
         // alerts. Fall back reading their CalDAV alarms.
         r = load_legacy_alarms(mboxname, userid,
                 CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME,
-                INTERNALIZE_DETERMINISTIC_UID|INTERNALIZE_KEEP_APPLE,
-                &defalarms->with_time, &buf);
+                legacy_flags, &defalarms->with_time, &buf);
 
         if (!r)
             r = load_legacy_alarms(mboxname, userid,
                     CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE,
-                    INTERNALIZE_DETERMINISTIC_UID|INTERNALIZE_KEEP_APPLE,
-                    &defalarms->with_date, &buf);
+                    legacy_flags, &defalarms->with_date, &buf);
 
         if (r)
             defaultalarms_fini(defalarms);
@@ -295,6 +294,14 @@ EXPORTED int defaultalarms_load(const char *mboxname,
     free(calhomename);
     buf_free(&buf);
     return r;
+}
+
+EXPORTED int defaultalarms_load(const char *mboxname,
+                                const char *userid,
+                                struct defaultalarms *defalarms)
+{
+    return load_alarms(mboxname, userid,
+            INTERNALIZE_DETERMINISTIC_UID|INTERNALIZE_KEEP_APPLE, defalarms);
 }
 
 static void set_alarms_dl(struct dlist *root, const char *name, icalcomponent *alarms)
@@ -360,38 +367,144 @@ done:
     return r;
 }
 
+struct migrate_shared_defaultalarms_rock {
+    struct mailbox *mbox;
+    const char *ownerid;
+    struct defaultalarms *defalarms;
+};
+
+#if 0
+HIDDEN int caldav_write_personal_data(struct mailbox *mailbox,
+                                      const char *userid,
+                                      uint32_t uid,
+                                      const struct caldav_personal_data *data)
+{
+    struct message_guid guid;
+    struct buf value = BUF_INITIALIZER;
+    const char *icalstr = icalcomponent_as_ical_string(data->vpatch);
+    struct dlist *dl;
+    int ret;
+
+    ret = mailbox_get_annotate_state(mailbox, uid, NULL);
+    if (ret) return ret;
+
+    dl = dlist_newkvlist(NULL, "CALDATA");
+    dlist_setdate(dl, "LASTMOD", time(0));
+    dlist_setnum64(dl, "MODSEQ", data->modseq);
+    message_guid_generate(&guid, icalstr, strlen(icalstr));
+    dlist_setguid(dl, "GUID", &guid);
+    dlist_setatom(dl, "VPATCH", icalstr);
+    dlist_setatom(dl, "USEDEFAULTALERTS", data->usedefaultalerts ? "YES" : "NO");
+    dlist_printbuf(dl, 1, &value);
+    dlist_free(&dl);
+
+    ret = mailbox_annotation_write(mailbox, uid,
+                                   PER_USER_CAL_DATA, userid, &value);
+    buf_free(&value);
+
+    return ret;
+}
+
+HIDDEN int caldav_load_personal_data(struct mailbox *mailbox,
+                                     const char *userid,
+                                     uint32_t uid,
+                                     struct caldav_personal_data *data)
+{
+    struct buf value = BUF_INITIALIZER;
+    struct dlist *dl = NULL;
+    memset(data, 0, sizeof(struct caldav_personal_data));
+
+    int r = mailbox_annotation_lookup(mailbox, uid,
+            PER_USER_CAL_DATA, userid, &value);
+
+    if (!r && !buf_len(&value))
+        r = IMAP_NOTFOUND;
+
+    if (r) goto done;
+
+    const char *sval;
+    dlist_getatom(dl, "VPATCH", &sval);
+    if (sval) data->vpatch = icalparser_parse_string(sval);
+
+    dlist_getatom(dl, "USEDEFAULTALERTS", &sval);
+    data->usedefaultalerts = !strcmpsafe("YES", sval);
+
+    dlist_getnum64(dl, "MODSEQ", &data->modseq);
+
+done:
+    buf_free(&value);
+    dlist_free(&dl);
+    return r;
+}
+#endif
+
+static int migrate_shared_defaultalarms(const char *mboxname,
+                                        uint32_t uid,
+                                        const char *entry,
+                                        const char *userid,
+                                        const struct buf *value,
+                                        const struct annotate_metadata *mdata,
+                                        void *vrock)
+{
+    struct migrate_shared_defaultalarms_rock *rock = vrock;
+
+    if (!strcmp(userid, rock->ownerid))
+        return 0;
+
+#if 0
+    struct caldav_personal_data personal_data = { 0 };
+    int r = caldav_load_personal_data(rock->mbox, userid, uid, &personal_data);
+    if (r) {
+        xsyslog(LOG_ERR, "could not load per-user data",
+                "mboxname=<%s> userid=<%s> imap_uid=<%d>, err=<%s>",
+                mboxname, userid, uid, cyrusdb_strerror(r));
+        goto done;
+    }
+#endif
+
+
+
+    // FIXME
+    assert(mboxname);
+    assert(uid);
+    assert(entry);
+    assert(value);
+    assert(mdata);
+
+    return 0;
+}
+
 HIDDEN int defaultalarms_migrate(struct mailbox *mbox, const char *userid,
                                  enum defaultalarms_migrate_flags flags,
                                  int *did_migratep)
 {
     struct defaultalarms defalarms = DEFAULTALARMS_INITIALIZER;
     mbname_t *mbname = mbname_from_intname(mailbox_name(mbox));
+    const char *ownerid = mbname_userid(mbname);
     struct buf buf = BUF_INITIALIZER;
     *did_migratep = 0;
 
-    // Check if JMAP default alerts annotation already is set
-    int r = annotatemore_lookup(mailbox_name(mbox),
-            JMAP_ANNOT_DEFAULTALERTS, userid, &buf);
+    // Load default alerts, either from JMAP or CalDAV
+    int r = load_alarms(mailbox_name(mbox), ownerid, 0, &defalarms);
+    if (r) {
+        xsyslog(LOG_ERR, "could not load default alarms",
+                "mboxname=<%s> userid=<%s> err=<%s>",
+                mailbox_name(mbox), ownerid, cyrusdb_strerror(r));
+    }
 
+    // Set JMAP default alerts annotation if not already set
+    r = annotatemore_lookup(mailbox_name(mbox),
+            JMAP_ANNOT_DEFAULTALERTS, ownerid, &buf);
     if (!r && !buf_len(&buf)) {
-        // Set JMAP default alerts annotation
-        r = load_legacy_alarms(mailbox_name(mbox), userid,
-                CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATETIME, 0,
-                &defalarms.with_time, &buf);
-        if (r) goto done;
-
-        r = load_legacy_alarms(mailbox_name(mbox), userid,
-                CALDAV_ANNOT_DEFAULTALARM_VEVENT_DATE, 0,
-                &defalarms.with_date, &buf);
-        if (r) goto done;
-
-
-        if (defalarms.with_time.ical || defalarms.with_date.ical ||
-                !strcmpsafe(mbname_userid(mbname), userid)) {
-            r = defaultalarms_save(mbox, userid,
-                    defalarms.with_time.ical, defalarms.with_date.ical);
-            *did_migratep = !r;
-        }
+        r = defaultalarms_save(mbox, userid,
+                defalarms.with_time.ical, defalarms.with_date.ical);
+        *did_migratep = !r;
+    }
+    if (r) {
+        xsyslog(LOG_ERR, "could not read or update JMAP default alerts",
+                "mboxname=<%s> userid=<%s> err=<%s>",
+                mailbox_name(mbox), ownerid, cyrusdb_strerror(r));
+        goto done;
     }
 
     if (!(flags & DEFAULTALARMS_MIGRATE_KEEP_CALDAV_ALARMS)) {
@@ -423,6 +536,15 @@ HIDDEN int defaultalarms_migrate(struct mailbox *mbox, const char *userid,
                     mailbox_name(mbox), cyrusdb_strerror(r2));
         }
     }
+
+    // Inject default alarms in sharee VEVENTs and disable useDefaultAlerts
+    struct migrate_shared_defaultalarms_rock rock = {
+        .mbox = mbox,
+        .ownerid = ownerid,
+        .defalarms = &defalarms
+    };
+    annotatemore_findall_mailbox(mbox, ANNOTATE_ANY_UID, PER_USER_CAL_DATA,
+            0, migrate_shared_defaultalarms, &rock, ANNOTATE_TOMBSTONES);
 
 done:
     defaultalarms_fini(&defalarms);
