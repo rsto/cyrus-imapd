@@ -6502,31 +6502,6 @@ static void eventquery_read_timerange(json_t *filter,
     }
 }
 
-static int eventquery_have_textsearch(json_t *filter)
-{
-    if (!JNOTNULL(filter))
-        return 0;
-
-    json_t *jval;
-    size_t i;
-    json_array_foreach(json_object_get(filter, "conditions"), i, jval) {
-        if (eventquery_have_textsearch(jval))
-            return 1;
-    }
-
-    if (json_object_get(filter, "inCalendars") ||
-        json_object_get(filter, "text") ||
-        json_object_get(filter, "title") ||
-        json_object_get(filter, "description") ||
-        json_object_get(filter, "location") ||
-        json_object_get(filter, "owner") ||
-        json_object_get(filter, "attendee")) {
-        return 1;
-    }
-
-    return 0;
-}
-
 struct eventquery_match {
     char *ical_uid;
     char *utcstart;
@@ -6979,7 +6954,7 @@ struct eventquery_recur_rock {
 static int eventquery_recur_cb(icalcomponent *comp,
                                icaltimetype start,
                                icaltimetype end __attribute__((unused)),
-                               icaltimetype recurid __attribute__((unused)), // FIXME
+                               icaltimetype recurid __attribute__((unused)),
                                int is_standalone __attribute__((unused)),
                                void *vrock)
 {
@@ -7036,6 +7011,96 @@ static int _calendarevent_queryargs_parse(jmap_req_t *req __attribute__((unused)
     return r;
 }
 
+static struct caldav_jscal_filter *build_jscal_filter(json_t *jfilter,
+                                                      struct eventquery_args *args,
+                                                      int *needs_xapian,
+                                                      ptrarray_t *mempool)
+{
+    struct caldav_jscal_filter *filter =
+        xzmalloc(sizeof(struct caldav_jscal_filter));
+    const char *s;
+
+    // FIXME inCalendars
+
+    s = json_string_value(json_object_get(jfilter, "uid"));
+    if (s) {
+        char *v = xstrdup(s);
+        ptrarray_append(mempool, v);
+        filter->ical_uid = v;
+    }
+
+    s = json_string_value(json_object_get(jfilter, "before"));
+    if (s) {
+        time_t t = eventquery_read_datetime(s, args->zone, caldav_eternity);
+        if (t != caldav_eternity) {
+            time_t *v = xmalloc(sizeof(time_t));
+            *v = t;
+            ptrarray_append(mempool, v);
+            filter->before = v;
+        }
+    }
+
+    s = json_string_value(json_object_get(jfilter, "after"));
+    if (s) {
+        time_t t = eventquery_read_datetime(s, args->zone, caldav_epoch);
+        if (t != caldav_epoch) {
+            time_t *v = xmalloc(sizeof(time_t));
+            *v = t;
+            ptrarray_append(mempool, v);
+            filter->after = v;
+        }
+    }
+
+    s = json_string_value(json_object_get(jfilter, "operator"));
+    if (s) {
+        filter->op = CALDAV_JSCAL_NOOP;
+        if (!strcasecmp(s, "AND"))
+            filter->op = CALDAV_JSCAL_AND;
+        else if (!strcasecmp(s, "OR"))
+            filter->op = CALDAV_JSCAL_OR;
+        else if (!strcasecmp(s, "NOT"))
+            filter->op = CALDAV_JSCAL_NOT;
+
+        if (filter->op != CALDAV_JSCAL_NOOP) {
+            size_t i;
+            json_t *jsub;
+            json_array_foreach(json_object_get(jfilter, "conditions"), i, jsub) {
+                ptrarray_append(&filter->subfilters,
+                    build_jscal_filter(jsub, args, needs_xapian, mempool));
+            }
+        }
+    }
+
+    if (json_object_get(jfilter, "inCalendars") ||
+        json_object_get(jfilter, "text") ||
+        json_object_get(jfilter, "title") ||
+        json_object_get(jfilter, "description") ||
+        json_object_get(jfilter, "location") ||
+        json_object_get(jfilter, "owner") ||
+        json_object_get(jfilter, "attendee")) {
+        *needs_xapian = 1;
+    }
+
+    return filter;
+}
+
+static void free_jscal_filter(struct caldav_jscal_filter **jscal_filterptr)
+{
+    if (!jscal_filterptr || !*jscal_filterptr)
+        return;
+
+    struct caldav_jscal_filter *filter = *jscal_filterptr;
+    *jscal_filterptr = NULL;
+
+    struct caldav_jscal_filter *subfilter;
+    while ((subfilter = ptrarray_pop(&filter->subfilters))) {
+        free_jscal_filter(&subfilter);
+    }
+
+    ptrarray_fini(&filter->subfilters);
+    free(filter);
+}
+
 static int eventquery_run(jmap_req_t *req,
                           struct jmap_query *query,
                           struct eventquery_args args,
@@ -7049,6 +7114,8 @@ static int eventquery_run(jmap_req_t *req,
     struct buf buf = BUF_INITIALIZER;
     size_t nsort = 0;
     int is_sharee = strcmp(req->accountid, req->userid);
+    struct caldav_jscal_filter *jscal_filter = NULL;
+    ptrarray_t mempool = PTRARRAY_INITIALIZER;
     int is_fastpath = 0;
 
     /* Sanity check arguments */
@@ -7092,21 +7159,16 @@ static int eventquery_run(jmap_req_t *req,
         }
     }
 
-    int have_textsearch = eventquery_have_textsearch(query->filter);
+    int needs_xapian = 0;
+    jscal_filter = build_jscal_filter(query->filter, &args,
+            &needs_xapian, &mempool);
 
     /* Attempt to fast-path trivial query */
-
-    if (!have_textsearch && !args.expandrecur && query->position >= 0 && !query->anchor) {
+    if (!needs_xapian && !args.expandrecur && query->position >= 0 && !query->anchor) {
         struct eventquery_fastpath_rock rock = {
             req, query, is_sharee, BUF_INITIALIZER
         };
-        const char *wantuid = json_string_value(json_object_get(query->filter, "uid"));
-        struct caldav_jscal_filter jscal_filter = {
-            .ical_uid = wantuid,
-            .after = &after,
-            .before = &before,
-        };
-        r = caldav_foreach_jscal(db, req->userid, &jscal_filter, NULL,
+        r = caldav_foreach_jscal(db, req->userid, jscal_filter, NULL,
                 sort, nsort, eventquery_fastpath_cb, &rock);
         buf_free(&rock.buf);
         is_fastpath = 1;
@@ -7114,8 +7176,7 @@ static int eventquery_run(jmap_req_t *req,
     }
 
     /* Handle non-trivial query */
-
-    if (have_textsearch) {
+    if (needs_xapian) {
         /* Query and sort matches in search backend. */
         r = eventquery_textsearch_run(req, query->filter, db, before, after,
                 sort, nsort, args.expandrecur,&matches);
@@ -7128,11 +7189,7 @@ static int eventquery_run(jmap_req_t *req,
         };
 
         enum caldav_sort mboxsort = CAL_SORT_MAILBOX;
-        struct caldav_jscal_filter jscal_filter = {
-            .after = &after,
-            .before = &before
-        };
-        r = caldav_foreach_jscal(db, req->userid, &jscal_filter, NULL,
+        r = caldav_foreach_jscal(db, req->userid, jscal_filter, NULL,
                                      args.expandrecur ? &mboxsort : sort,
                                      args.expandrecur ? 1 : nsort,
                                      eventquery_cb, &rock);
@@ -7235,7 +7292,7 @@ static int eventquery_run(jmap_req_t *req,
     }
 
 done:
-    if (jmap_is_using(req, JMAP_DEBUG_EXTENSION)) {
+    if (jmap_is_using(req, JMAP_DEBUG_EXTENSION) && !*err) {
         *debug = json_pack("{s:b}", "isFastPath", is_fastpath);
     }
     if (db) caldav_close(db);
@@ -7247,6 +7304,12 @@ done:
         }
     }
     ptrarray_fini(&matches);
+    if (ptrarray_size(&mempool)) {
+        void *p;
+        while ((p = ptrarray_pop(&mempool))) free(p);
+    }
+    ptrarray_fini(&mempool);
+    free_jscal_filter(&jscal_filter);
     buf_free(&buf);
     free(sort);
     return r;

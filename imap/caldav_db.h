@@ -215,13 +215,25 @@ struct caldav_jscal {
     const char *cachedata;
 };
 
+enum caldav_jscal_filterop {
+    CALDAV_JSCAL_NOOP = 0,
+    CALDAV_JSCAL_AND,
+    CALDAV_JSCAL_OR,
+    CALDAV_JSCAL_NOT
+};
+
 struct caldav_jscal_filter {
+    // All conditions must match
     const mbentry_t *mbentry;
     const char *ical_uid;
     const char *ical_recurid;
     uint32_t imap_uid;
     const time_t *after;
     const time_t *before;
+
+    // All subfilter conditions must match
+    enum caldav_jscal_filterop op;
+    ptrarray_t subfilters;
 };
 
 struct caldav_jscal_window {
