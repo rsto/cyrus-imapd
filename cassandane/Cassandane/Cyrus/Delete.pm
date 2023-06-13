@@ -944,4 +944,111 @@ sub test_cyr_expire_inherit_annot
     $self->assert_num_equals(0, $talk->get_response_code('exists'));
 }
 
+sub test_cyr_expire_noexpire
+    :DelayedDelete :min_version_3_9 :NoAltNameSpace
+{
+    my ($self) = @_;
+    my $store = $self->{store};
+    my $talk = $store->get_client();
+
+    xlog $self, "Create subfolder";
+    my $subfolder = 'INBOX.A';
+    $talk->create($subfolder)
+        or $self->fail("Cannot create folder $subfolder: $@");
+    $self->assert_str_equals('ok', $talk->get_last_completion_response());
+
+    xlog $self, "Set /vendor/cmu/cyrus-imapd/expire annotation on subfolder";
+    $talk->setmetadata($subfolder, "/shared/vendor/cmu/cyrus-imapd/expire", '1s');
+    $self->assert_str_equals('ok', $talk->get_last_completion_response);
+
+    xlog $self, "Create message";
+    $store->set_folder($subfolder);
+    $self->make_message('msg1') or die;
+
+    xlog $self, "Set /vendor/cmu/cyrus-imapd/noexpire annotation on inbox";
+    $talk->setmetadata('INBOX', "/shared/vendor/cmu/cyrus-imapd/noexpire", 'true');
+    $self->assert_str_equals('ok', $talk->get_last_completion_response);
+
+    $talk->unselect();
+    $talk->select($subfolder);
+    $self->assert_num_equals(1, $talk->get_response_code('exists'));
+
+    xlog $self, "Run cyr_expire";
+    sleep(2);
+    $self->{instance}->run_command({ cyrus => 1 }, 'cyr_expire', '-X' => '1s' );
+
+    $talk->unselect();
+    $talk->select($subfolder);
+    $self->assert_num_equals(1, $talk->get_response_code('exists'));
+
+    xlog $self, "Remove /vendor/cmu/cyrus-imapd/noexpire annotation from inbox";
+    $talk->setmetadata('INBOX', "/shared/vendor/cmu/cyrus-imapd/noexpire", '');
+    $self->assert_str_equals('ok', $talk->get_last_completion_response);
+
+    xlog $self, "Run cyr_expire";
+    sleep(2);
+    $self->{instance}->run_command({ cyrus => 1 }, 'cyr_expire', '-X' => '1s' );
+
+    $talk->unselect();
+    $talk->select($subfolder);
+    $self->assert_num_equals(0, $talk->get_response_code('exists'));
+}
+
+sub test_cyr_expire_nodelete
+    :DelayedDelete :min_version_3_9 :NoAltNameSpace
+{
+    my ($self) = @_;
+
+    my $store = $self->{store};
+    my $adminstore = $self->{adminstore};
+    my $talk = $store->get_client();
+    my $admintalk = $adminstore->get_client();
+
+    my $subfoldername = 'foo';
+    my $subfolder = 'INBOX.foo';
+    $talk->create($subfolder)
+        or $self->fail("Cannot create folder $subfolder: $@");
+    $self->assert_str_equals('ok', $talk->get_last_completion_response());
+
+    xlog $self, "Setting /vendor/cmu/cyrus-imapd/delete annotation.";
+    $talk->setmetadata($subfolder, "/shared/vendor/cmu/cyrus-imapd/delete", '1s');
+
+    $self->check_folder_ondisk($subfolder);
+    $self->check_folder_not_ondisk($subfolder, deleted => 1);
+
+    xlog $self, "Delete $subfolder";
+    $talk->unselect();
+    $talk->delete($subfolder)
+        or $self->fail("Cannot delete folder $subfolder: $@");
+    $self->assert_str_equals('ok', $talk->get_last_completion_response());
+
+    xlog $self, "Ensure we can't select $subfolder anymore";
+    $talk->select($subfolder);
+    $self->assert_str_equals('no', $talk->get_last_completion_response());
+    $self->assert_matches(qr/Mailbox does not exist/i, $talk->get_last_error());
+
+    $self->check_folder_not_ondisk($subfolder);
+
+    my ($path) = $self->{instance}->folder_to_deleted_directories("user.cassandane.$subfoldername");
+    $self->assert(-d "$path");
+
+    xlog $self, "Set /vendor/cmu/cyrus-imapd/nodelete annotation on inbox";
+    $talk->setmetadata('INBOX', "/shared/vendor/cmu/cyrus-imapd/nodelete", 'true');
+    $self->assert_str_equals('ok', $talk->get_last_completion_response);
+
+    sleep(2);
+
+    xlog $self, "Run cyr_expire";
+    $self->{instance}->run_command({ cyrus => 1 }, 'cyr_expire', '-D' => '1s' );
+    $self->assert(-d "$path");
+
+    xlog $self, "Remove /vendor/cmu/cyrus-imapd/nodelete annotation from inbox";
+    $talk->setmetadata('INBOX', "/shared/vendor/cmu/cyrus-imapd/nodelete", '');
+    $self->assert_str_equals('ok', $talk->get_last_completion_response);
+
+    xlog $self, "Run cyr_expire";
+    $self->{instance}->run_command({ cyrus => 1 }, 'cyr_expire', '-D' => '1s' );
+    $self->assert(!-d "$path");
+}
+
 1;

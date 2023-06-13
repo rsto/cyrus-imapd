@@ -282,43 +282,67 @@ static int parse_duration(const char *s, int *secondsp)
 }
 
 /*
- * Given an annotation, reads it, and converts it into 'seconds',
- * using `parse_duration`.
+ * Given an annotation, reads it from the mailbox or any of its
+ * parents if iterate is true.
  *
  * On Success: Returns 1
  * On Failure: Returns 0
  */
-static int get_annotation_value(const mbentry_t *mbentry,
+static int get_annotation_value(const char *mboxname,
                                 const char *annot_entry,
-                                int *secondsp, bool iterate)
+                                struct buf *annot_value,
+                                bool iterate)
 {
-    struct buf attrib = BUF_INITIALIZER;
     int ret = 0;
     /* mboxname needs to be copied since `mboxname_make_parent`
      * runs a strrchr() on it.
      */
-    char *buf = xstrdup(mbentry->name);
+    char *buf = xstrdup(mboxname);
 
     /*
      * Mailboxes inherit /vendo/cmu/cyrus-imapd/{expire, archive, delete},
      * so we need to iterate all the way up to "" (server entry).
      */
     do {
-        buf_free(&attrib);
-        ret = annotatemore_lookup(buf, annot_entry, "", &attrib);
+        buf_reset(annot_value);
+        ret = annotatemore_lookup(buf, annot_entry, "", annot_value);
         if (ret ||              /* error */
-            attrib.s)           /* found an entry */
+            buf_len(annot_value))           /* found an entry */
             break;
     } while (mboxname_make_parent(buf) && iterate);
 
-    if (attrib.s && parse_duration(attrib.s, secondsp))
-        ret = 1;
-    else
-        ret = 0;
-
-    buf_free(&attrib);
     free(buf);
 
+    return buf_len(annot_value) ? 1 : 0;
+}
+
+static int get_duration_annotation(const char *mboxname,
+                                   const char *annot_entry,
+                                   int *secondsp, bool iterate)
+{
+    struct buf attrib = BUF_INITIALIZER;
+    int ret = 0;
+
+    if (get_annotation_value(mboxname, annot_entry, &attrib, iterate) &&
+            parse_duration(buf_cstring(&attrib), secondsp))
+        ret = 1;
+
+    buf_free(&attrib);
+    return ret;
+}
+
+static int get_bool_annotation(const char *mboxname,
+                               const char *annot_entry,
+                               bool iterate)
+{
+    struct buf attrib = BUF_INITIALIZER;
+    int ret = 0;
+
+    if (get_annotation_value(mboxname, annot_entry, &attrib, iterate) &&
+            !strcmpsafe("true", buf_cstring(&attrib)))
+        ret = 1;
+
+    buf_free(&attrib);
     return ret;
 }
 
@@ -378,7 +402,7 @@ static int archive(const mbentry_t *mbentry, void *rock)
 
     /* check /vendor/cmu/cyrus-imapd/archive */
     if (!arock->skip_annotate &&
-        get_annotation_value(mbentry, IMAP_ANNOT_NS "archive",
+        get_duration_annotation(mbentry->name, IMAP_ANNOT_NS "archive",
                              &archive_seconds, false)) {
         arock->archive_mark = archive_seconds ?
             time(0) - archive_seconds : 0;
@@ -430,6 +454,7 @@ static unsigned expire_cb(struct mailbox *mailbox __attribute__((unused)),
 static int expire(const mbentry_t *mbentry, void *rock)
 {
     struct expire_rock *erock = (struct expire_rock *) rock;
+    mbname_t *mbname = mbname_from_intname(mbentry->name);
     int r;
     struct mailbox *mailbox = NULL;
     unsigned numexpunged = 0;
@@ -462,12 +487,23 @@ static int expire(const mbentry_t *mbentry, void *rock)
         goto done;
     }
 
+    /* see if this mailbox should be ignored */
+    if (mbname_userid(mbname)) {
+        mbname_truncate_boxes(mbname, 0);
+        if (get_bool_annotation(mbname_intname(mbname),
+                    IMAP_ANNOT_NS "noexpire", true)) {
+            syslog(LOG_WARNING, "user inbox has 'noexpire' set - skipping: %s",
+                    mbentry->name);
+            goto done;
+        }
+    }
+
     /* see if we need to expire messages.
      * since mailboxes inherit /vendor/cmu/cyrus-imapd/expire,
      * we need to iterate all the way up to "" (server entry)
      */
     if (!erock->skip_annotate &&
-        get_annotation_value(mbentry, IMAP_ANNOT_NS "expire",
+        get_duration_annotation(mbentry->name, IMAP_ANNOT_NS "expire",
                              &expire_seconds, true)) {
         /* add mailbox to table */
         erock->expire_mark = expire_seconds ?
@@ -517,6 +553,7 @@ static int expire(const mbentry_t *mbentry, void *rock)
 done:
     mailbox_close(&mailbox);
     libcyrus_run_delayed();
+    mbname_free(&mbname);
     /* Even if we had a problem with one mailbox, continue with the others */
     return 0;
 }
@@ -524,6 +561,7 @@ done:
 static int delete(const mbentry_t *mbentry, void *rock)
 {
     struct delete_rock *drock = (struct delete_rock *) rock;
+    mbname_t *mbname = mbname_from_intname(mbentry->name);
     time_t timestamp;
     int delete_seconds = -1;
 
@@ -539,9 +577,22 @@ static int delete(const mbentry_t *mbentry, void *rock)
     if (!mboxname_isdeletedmailbox(mbentry->name, &timestamp))
         goto done;
 
+    /* see if this mailbox should be ignored */
+    if (mbname_userid(mbname)) {
+        mbname_t *mbinbox = mbname_from_userid(mbname_userid(mbname));
+        if (get_bool_annotation(mbname_intname(mbinbox),
+                    IMAP_ANNOT_NS "nodelete", true)) {
+            syslog(LOG_WARNING, "user inbox has 'nodelete' set - skipping: %s",
+                    mbentry->name);
+            mbname_free(&mbinbox);
+            goto done;
+        }
+        mbname_free(&mbinbox);
+    }
+
     /* check /vendor/cmu/cyrus-imapd/delete */
     if (!drock->skip_annotate &&
-        get_annotation_value(mbentry, IMAP_ANNOT_NS "delete",
+        get_duration_annotation(mbentry->name, IMAP_ANNOT_NS "delete",
                              &delete_seconds, false)) {
         drock->delete_mark = delete_seconds ?
             time(0) - delete_seconds: 0;
@@ -557,6 +608,7 @@ static int delete(const mbentry_t *mbentry, void *rock)
 
 done:
     /* Even if we had a problem with one mailbox, continue with the others */
+    mbname_free(&mbname);
     return 0;
 }
 
