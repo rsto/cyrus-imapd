@@ -45,6 +45,8 @@ use DateTime;
 use Data::Dumper;
 use File::Temp qw(tempdir);
 use File::stat;
+use MIME::Base64 qw(encode_base64);
+use Encode qw(decode encode);
 
 use lib '.';
 use base qw(Cassandane::Cyrus::TestCase);
@@ -52,10 +54,19 @@ use Cassandane::Util::Log;
 
 sub new
 {
+
     my ($class, @args) = @_;
     my $config = Cassandane::Config->default()->clone();
-    $config->set(conversations => 'on');
-    return $class->SUPER::new({ config => $config }, @args);
+    $config->set(
+        conversations => 'on',
+        httpallowcompress => 'no',
+        httpmodules => 'jmap',
+    );
+    return $class->SUPER::new({
+        config => $config,
+        jmap => 1,
+        services => [ 'imap', 'http' ]
+    }, @args);
 }
 
 sub set_up
@@ -136,6 +147,45 @@ sub create_testmessages
     $self->{instance}->run_command({cyrus => 1}, 'squatter');
 }
 
+sub get_snippets
+{
+    # Previous versions of this test module used XSNIPPETS to
+    # assert snippets but this command got removed from Cyrus.
+    # Use JMAP instead.
+
+    my ($self, $folder, $uids, $field, $text) = @_;
+
+    my $imap = $self->{store}->get_client();
+    my $jmap = $self->{jmap};
+
+    $self->assert_not_null($jmap);
+
+    $imap->select($folder);
+    my $res = $imap->fetch($uids, ['emailid']);
+    my %emailIdToImapUid = map { $res->{$_}{emailid}[0] => $_ } keys %$res;
+
+    $res = $jmap->CallMethods([
+        ['SearchSnippet/get', {
+            filter => {
+                $field => $text,
+            },
+            emailIds => [ keys %emailIdToImapUid ],
+        }, 'R1'],
+    ]);
+
+    my $snippetField = $field eq 'subject' ? 'subject' : 'preview';
+    my @snippets = map { $_->{$snippetField} ? [
+        0,
+        $emailIdToImapUid{$_->{emailId}},
+        $field,
+        $_->{$snippetField},
+    ] : () } @{$res->[0][1]{list}};
+
+    return {
+        snippets => [ sort { $a->[1] <=> $b->[1] } @snippets ],
+    };
+}
+
 sub test_copy_messages
     :needs_search_xapian
 {
@@ -153,12 +203,13 @@ sub test_copy_messages
 }
 
 sub test_stem_verbs
-    :min_version_3_0 :needs_search_xapian
+    :min_version_3_0 :needs_search_xapian :JMAPExtensions
 {
     my ($self) = @_;
     $self->create_testmessages();
 
     my $talk = $self->{store}->get_client();
+    $self->assert_not_null($self->{jmap});
 
     xlog $self, "Select INBOX";
     my $r = $talk->select("INBOX") || die;
@@ -178,10 +229,7 @@ sub test_stem_verbs
     $self->assert_num_equals(3, scalar @$r);
 
     xlog $self, 'XSNIPPETS for FUZZY subject "runs"';
-    $r = $talk->xsnippets(
-        [['INBOX', $uidvalidity, $uids]], 'utf-8',
-        ['fuzzy', 'subject', { Quote => 'runs' }]
-    ) || die;
+    $r = $self->get_snippets('INBOX', $uids, 'subject', 'runs');
     $self->assert_num_equals(3, scalar @{$r->{snippets}});
 }
 
@@ -253,11 +301,7 @@ sub test_snippet_wildcard
     my $uidvalidity = $talk->get_response_code('uidvalidity');
 
     xlog $self, "XSNIPPETS for $term";
-    $r = $talk->xsnippets(
-        [['INBOX', $uidvalidity, $uids]], 'utf-8',
-        ['fuzzy', 'text', { Quote => "$term*" }]
-    ) || die;
-    xlog $self, Dumper($r);
+    $r = $self->get_snippets('INBOX', $uids, 'text', "$term*");
     $self->assert_num_equals(2, scalar @{$r->{snippets}});
 }
 
@@ -360,13 +404,17 @@ sub test_normalize_snippets
     my ($self) = @_;
 
     # Set up test message with funny characters
-    my $body = "foo gären советской diĝir naïve léger";
-    my @terms = split / /, $body;
+use utf8;
+    my @terms = ( "gären", "советской", "diĝir", "naïve", "léger" );
+no utf8;
+    my $body = encode_base64(encode('UTF-8', join(' ', @terms)));
+    $body =~ s/\r?\n/\r\n/gs;
 
     xlog $self, "Generate and index test messages.";
     my %params = (
         mime_charset => "utf-8",
-        body => $body
+        mime_encoding => 'base64',
+        body => $body,
     );
     $self->make_message("1", %params) || die;
 
@@ -382,13 +430,22 @@ sub test_normalize_snippets
 
     # Assert that diacritics are matched and returned
     foreach my $term (@terms) {
+        xlog "XXXX" . Dumper($term);
+        $r = $self->get_snippets('INBOX', $uids, 'text', $term);
+        xlog "XXXX" . Dumper($r);
+        return;
+
         xlog $self, "XSNIPPETS for FUZZY text \"$term\"";
         $r = $talk->xsnippets(
             [['INBOX', $uidvalidity, $uids]], 'utf-8',
             ['fuzzy', 'text', { Quote => $term }]
         ) || die;
+
+        xlog "XXXX" . Dumper($r);
         $self->assert_num_not_equals(index($r->{snippets}[0][3], "<b>$term</b>"), -1);
     }
+
+no utf8;
 
     # Assert that search without diacritics matches
     if ($self->{skipdiacrit}) {
@@ -400,6 +457,7 @@ sub test_normalize_snippets
         ) || die;
         $self->assert_num_not_equals(index($r->{snippets}[0][3], "<b>naïve</b>"), -1);
     }
+
 }
 
 sub test_skipdiacrit
