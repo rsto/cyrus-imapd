@@ -1338,6 +1338,7 @@ BUILT_SOURCES += \
 imap_httpd_SOURCES += \
 	imap/defaultalarms.c \
 	imap/defaultalarms.h \
+	imap/http_convert.c \
 	imap/http_jmap.c \
 	imap/http_jmap.h \
 	imap/jmap_admin.c \
