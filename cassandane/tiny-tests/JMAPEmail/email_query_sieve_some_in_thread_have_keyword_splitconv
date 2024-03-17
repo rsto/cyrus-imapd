@@ -1,0 +1,97 @@
+#!perl
+use Cassandane::Tiny;
+
+sub test_email_query_sieve_some_in_thread_have_keyword_splitconv
+    :needs_component_jmap :needs_component_sieve
+{
+    my ($self) = @_;
+    my $jmap = $self->{jmap};
+    my $imap = $self->{store}->get_client();
+
+    $imap->create("matches") or die;
+
+    my $sieve = <<EOF;
+require ["x-cyrus-jmapquery", "x-cyrus-log", "variables", "fileinto"];
+if
+  allof( not string :is "\${stop}" "Y",
+    jmapquery text:
+    {
+      "someInThreadHaveKeyword": "\$IsMailingList"
+    }
+.
+  )
+{
+  fileinto "matches";
+}
+EOF
+
+    $self->{instance}->install_sieve_script(encode('utf-8', $sieve));
+
+    my $store = $self->{store};
+    my %exp;
+    $exp{A} = $self->make_message("Email A", %params);
+    $exp{A}->set_attributes(uid => 1, cid => $exp{A}->make_cid());
+    $exp{B} = $self->make_message("Re: Email A",
+        references => [ $exp{A} ],
+        store => $store,
+    );
+
+=pod
+    my $convMaxThread = $self->{instance}->{config}->get('conversations_max_thread');
+    xlog "XXXXX " . Dumper($convMaxThread);
+=cut
+
+    foreach (1 .. 120) {
+        $self->make_message("Re: Email A",
+            references => [ $exp{A} ],
+            store => $store,
+        );
+    }
+
+    # set keyword on the second conversation of the split
+    my $res = $imap->store('110', '+flags', '($IsMailingList)');
+
+    xlog $self, "run squatter";
+    $self->{instance}->run_command({cyrus => 1}, 'squatter');
+
+    $res = $jmap->CallMethods([
+        ['Email/query', {
+            filter => {
+                subject => "Re: Email A",
+            },
+            limit => 1,
+        }, 'R1'],
+        ['Email/get', {
+            '#ids' => {
+                resultOf => 'R1',
+                name => 'Email/query',
+                path => '/ids',
+            },
+            properties => ['header:references']
+        }, 'R2']
+    ]);
+    my $references = $res->[1][1]{list}[0]{'header:references'};
+    $self->assert_not_null($references);
+
+    my $mime = <<EOF;
+From: helloworld\@local
+To: to\@local
+Subject: Re: Email A
+References: $references
+Date: Mon, 13 Apr 2020 15:34:03 +0200
+MIME-Version: 1.0
+Content-Type: text/plain;charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+hello
+
+EOF
+    $mime =~ s/\r?\n/\r\n/gs;
+
+    my $msg = Cassandane::Message->new();
+    $msg->set_lines(split /\n/, $mime);
+    $self->{instance}->deliver($msg);
+    $self->{instance}->run_command({cyrus => 1}, 'squatter');
+
+    $self->assert_num_equals(1, $imap->message_count('matches'));
+}
