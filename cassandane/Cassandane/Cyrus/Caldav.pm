@@ -111,7 +111,6 @@ sub new
     $config->set(caldav_realm => 'Cassandane');
     $config->set(httpmodules => 'caldav');
     $config->set(calendar_user_address_set => 'example.com');
-    $config->set(defaultdomain => 'example.com');
     $config->set(httpallowcompress => 'no');
     $config->set(caldav_historical_age => -1);
     $config->set(icalendar_max_size => 100000);
