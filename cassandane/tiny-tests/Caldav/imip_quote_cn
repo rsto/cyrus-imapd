@@ -3,12 +3,14 @@ use Cassandane::Tiny;
 use Data::UUID;
 
 sub test_imip_quote_cn
-  : needs_component_httpd {
+    :needs_component_httpd
+    :NoStartInstances
+{
     my ($self) = @_;
 
-    # FIXME we need to override the imipnotifier imapd.conf
-    # setting, it's set to 'imip' but we want it to be set
-    # to NULL to trigger the code we are testing here.
+    $self->{instance}->{config}->set('imipnotifier' => undef);
+    $self->_start_instances();
+    $self->_setup_http_service_objects();
 
     my $service = $self->{instance}->get_service("http");
     my $caldav  = $self->{caldav};
