@@ -203,7 +203,26 @@ static void add_address(struct address_t **recipients, icalproperty *prop,
     param = icalproperty_get_first_parameter(prop, ICAL_CN_PARAMETER);
     if (param) {
         new->name = icalparameter_get_cn(param);
-        new->qpname = charset_encode_mimeheader(new->name, 0, 0);
+        char *qpname = charset_encode_mimeheader(new->name, 0, 0);
+        if (qpname && strncmp(qpname, "=?", 2) &&
+            strcspn(qpname, MIME_TSPECIALS) < strlen(qpname)) {
+            /* Need to quote this name */
+            struct buf buf = BUF_INITIALIZER;
+            buf_putc(&buf, '"');
+            for (const char *c = qpname; *c; c++) {
+                if ((*c == '"' || *c == '\\') &&
+                    (c == qpname || c[-1] != '\\')) {
+                    buf_putc(&buf, '\\');
+                }
+                buf_putc(&buf, *c);
+            }
+            buf_putc(&buf, '"');
+            new->qpname = buf_release(&buf);
+            free(qpname);
+        }
+        else {
+            new->qpname = qpname;
+        }
     }
     param = icalproperty_get_first_parameter(prop, ICAL_ROLE_PARAMETER);
     if (param)

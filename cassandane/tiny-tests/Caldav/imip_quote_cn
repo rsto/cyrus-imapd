@@ -1,0 +1,56 @@
+#!perl
+use Cassandane::Tiny;
+use Data::UUID;
+
+sub test_imip_quote_cn
+  : needs_component_httpd {
+    my ($self) = @_;
+
+    # FIXME we need to override the imipnotifier imapd.conf
+    # setting, it's set to 'imip' but we want it to be set
+    # to NULL to trigger the code we are testing here.
+
+    my $service = $self->{instance}->get_service("http");
+    my $caldav  = $self->{caldav};
+
+    my %testCases = (
+        'A'              => 'A',
+        'A <B>'          => '"A <B>"',
+        "A \N{TOMATO} B" => '=?UTF-8?Q?A_=F0=9F=8D=85_B?=',
+        'A "T" B'        => '"A \"T\" B"',
+        'A \ B'          => '"A \\ B"',
+        'A,B'            => '"A,B"',
+    );
+
+    my $uuidgen = Data::UUID->new;
+
+    keys %testCases;
+    while (my ($cn, $wantEmailAddressName) = each %testCases) {
+        my $uid  = $uuidgen->create_str;
+        my $ical = <<EOF;
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Foo//Bar//EN
+CALSCALE:GREGORIAN
+BEGIN:VEVENT
+UID:$uid
+TRANSP:OPAQUE
+SUMMARY:test
+DTSTART:20240703T153000Z
+DTSTAMP:20240703T153000Z
+SEQUENCE:0
+ORGANIZER;CN=$cn:MAILTO:mctest\@example.com
+ATTENDEE;PARTSTAT=ACCEPTED;RSVP=TRUE:MAILTO:cassandane\@example.com
+END:VEVENT
+END:VCALENDAR
+EOF
+        $caldav->Request(
+            'PUT', "Default/$uid.ics", $ical,
+            'Content-Type' => 'text/calendar; charset=utf-8'
+        );
+
+        # FIXME this is where we would want to validate that the email name
+        # in the To: header that got passed to SMTPServer matches
+        # $wantEmailAddressName.
+    }
+}
