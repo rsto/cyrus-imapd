@@ -111,12 +111,12 @@ sub new
     $config->set(caldav_realm => 'Cassandane');
     $config->set(httpmodules => 'caldav');
     $config->set(calendar_user_address_set => 'example.com');
-    $config->set(defaultdomain => 'example.com');
     $config->set(httpallowcompress => 'no');
     $config->set(caldav_historical_age => -1);
     $config->set(icalendar_max_size => 100000);
     $config->set(event_extra_params => 'vnd.cmu.davFilename vnd.cmu.davUid');
     $config->set(event_groups => 'calendar');
+    $config->set(imipnotifier => 'imip');
     return $class->SUPER::new({
         config => $config,
         adminstore => 1,
@@ -136,6 +136,21 @@ sub tear_down
 {
     my ($self) = @_;
     $self->SUPER::tear_down();
+}
+
+sub skip_check
+{
+    my ($self) = @_;
+
+    # XXX skip tests that would hang in verbose mode for now -- see
+    # XXX detailed comment at MaxMessages::put_submission
+    if (get_verbose()
+        && $self->{_name} eq 'test_imip_quote_cn')
+    {
+        return 'test would hang in verbose mode';
+    }
+
+    return undef;
 }
 
 sub _all_keys_match
