@@ -37,7 +37,7 @@ sub test_imip_quote_cn
         },
         { mailto => 'e@example.com',
           cn     => 'A \ B',
-          expect => '"A \\ B"',
+          expect => '"A \\\\ B"',
         },
         { mailto => 'f@example.com',
           cn     => 'A,B',
