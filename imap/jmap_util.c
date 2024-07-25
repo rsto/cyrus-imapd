@@ -665,6 +665,8 @@ HIDDEN char *jmap_decode_base64_nopad(const char *b64, size_t b64len)
     return data;
 }
 
+#include <unicode/ucsdet.h>
+
 EXPORTED void jmap_decode_to_utf8(const char *charset, int encoding,
                                   const char *data, size_t datalen,
                                   float confidence,
@@ -672,11 +674,70 @@ EXPORTED void jmap_decode_to_utf8(const char *charset, int encoding,
                                   int *is_encoding_problem)
 {
     charset_t cs = charset_lookupname(charset);
-    struct char_counts counts = { 0 };
     const char *charset_id = charset_canon_name(cs);
     assert(confidence >= 0.0 && confidence <= 1.0);
 
     buf_reset(text);
+
+    if (charset_decode(text, data, datalen, encoding)) {
+        xsyslog(LOG_INFO, "failed to decode UTF-8 data",
+                "encoding=<%s>", encoding_name(encoding));
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    UErrorCode uerr = U_ZERO_ERROR;
+    UCharsetDetector* ucsd = ucsdet_open(&uerr);
+    if (U_FAILURE(uerr)) {
+        xsyslog(LOG_ERR, "could not open charset detector",
+                "err=<%s>", u_errorName(uerr));
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    ucsdet_setText(ucsd, buf_base(text), buf_len(text), &uerr);
+    if (U_FAILURE(uerr)) {
+        xsyslog(LOG_ERR, "could not set charset detector text",
+                "err=<%s>", u_errorName(uerr));
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    const UCharsetMatch* match = ucsdet_detect(ucsd, &uerr);
+    if (U_FAILURE(uerr)) {
+        xsyslog(LOG_ERR, "charset detection failed",
+                "err=<%s>", u_errorName(uerr));
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    if (!match) {
+        xsyslog(LOG_INFO, "no charset detected", NULL);
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    const char *detected_charset_id = ucsdet_getName(match, &uerr);
+    syslog(LOG_ERR, "XXXXXXXX %s:%d: charset=%s charset_id=%s detected charset=%s", __func__, __LINE__, charset, charset_id, detected_charset_id);
+
+    charset_free(&cs);
+    cs = charset_lookupname(detected_charset_id);
+
+    if (charset_to_utf8(text, data, datalen, cs, encoding)) {
+        xsyslog(LOG_ERR, "charset_to_utf8 to failed", NULL);
+        if (is_encoding_problem) *is_encoding_problem = 1;
+        goto done;
+    }
+
+    struct char_counts counts =
+        charset_count_validutf8(buf_base(text), buf_len(text));
+    if (is_encoding_problem)
+        *is_encoding_problem = counts.invalid || counts.replacement;
+
+    ucsdet_close(ucsd);
+
+#if 0
+    struct char_counts counts = { 0 };
 
     /* Attempt fast path if data claims to be UTF-8 */
     if (encoding == ENCODING_NONE && !strcasecmp(charset_id, "UTF-8")) {
@@ -820,6 +881,8 @@ EXPORTED void jmap_decode_to_utf8(const char *charset, int encoding,
         detect_obj_free(&obj);
         buf_free(&buf);
     }
+#endif
+
 #endif
 
 done:
