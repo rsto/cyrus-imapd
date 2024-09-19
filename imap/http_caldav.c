@@ -6186,6 +6186,10 @@ int proppatch_caluseraddr(xmlNodePtr prop, unsigned set,
             xsyslog(LOG_ERR, "could not write schedule addresses",
                     "err=<%s>", error_message(r));
         }
+        else {
+            xml_add_prop(HTTP_OK, pctx->ns[NS_DAV], &propstat[PROPSTAT_OK],
+                    prop->name, prop->ns, NULL, 0);
+        }
 
         caldav_caluseraddr_fini(&new);
         caldav_caluseraddr_fini(&old);
