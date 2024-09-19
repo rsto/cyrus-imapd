@@ -1612,7 +1612,7 @@ static int setcalendar_writeprops(jmap_req_t *req,
         struct caldav_caluseraddr new = CALDAV_CALUSERADDR_INITIALIZER;
 
         struct caldav_caluseraddr old = CALDAV_CALUSERADDR_INITIALIZER;
-        caldav_caluseraddr_read(mailbox_name(mbox), req->userid, &old);
+        caldav_caluseraddr_read(mailbox_name(mbox), &old);
 
         size_t i;
         json_t *jpid;
@@ -1633,7 +1633,7 @@ static int setcalendar_writeprops(jmap_req_t *req,
             }
         }
 
-        r = caldav_caluseraddr_write(mbox, req->userid, &new);
+        r = caldav_caluseraddr_write(mbox, &new);
         if (r) {
             xsyslog(LOG_ERR, "failed to write participant identities",
                     "err=<%s>", error_message(r));
@@ -1990,7 +1990,9 @@ static void setcalendars_create(struct jmap_req *req,
             jmap_parser_invalid(&parser, "shareWith");
         }
     }
-    if (props.participant_identities && !jmap_is_using(req, JMAP_CALENDARS_EXTENSION)) {
+    if (props.participant_identities && (
+                !jmap_is_using(req, JMAP_CALENDARS_EXTENSION) ||
+                !jmap_hasrights(req, mboxname, ACL_ADMIN))) {
         jmap_parser_invalid(&parser, "participantIdentities");
     }
     if (json_array_size(parser.invalid)) {
@@ -2112,6 +2114,11 @@ static void setcalendars_update(jmap_req_t *req,
         if (!jmap_hasrights(req, mboxname, ACL_ADMIN)) {
             jmap_parser_invalid(&parser, "shareWith");
         }
+    }
+    if (props.participant_identities && (
+                !jmap_is_using(req, JMAP_CALENDARS_EXTENSION) ||
+                !jmap_hasrights(req, mboxname, ACL_ADMIN))) {
+        jmap_parser_invalid(&parser, "participantIdentities");
     }
     if (json_array_size(parser.invalid)) {
         *err = json_pack("{s:s, s:O}",
@@ -11900,7 +11907,7 @@ static int jmap_calendarpreferences_get(struct jmap_req *req)
             json_t *jpartid = json_null();
 
             struct caldav_caluseraddr caluseraddr = CALDAV_CALUSERADDR_INITIALIZER;
-            if (!caldav_caluseraddr_read(mbcalhome->name, req->accountid, &caluseraddr)) {
+            if (!caldav_caluseraddr_read(mbcalhome->name, &caluseraddr)) {
                 const char *addr = strarray_nth(&caluseraddr.uris, caluseraddr.pref);
                 if (addr) {
                     if (!strncasecmp(addr, "mailto:", 7)) addr += 7;
@@ -12033,7 +12040,7 @@ static void calendarpreferences_set(struct jmap_req *req,
         const char *partid = json_string_value(jpartid);
 
         struct caldav_caluseraddr caluseraddr = CALDAV_CALUSERADDR_INITIALIZER;
-        r = caldav_caluseraddr_read(mbcalhome->name, req->userid, &caluseraddr);
+        r = caldav_caluseraddr_read(mbcalhome->name, &caluseraddr);
         if (!r) {
             if (partid) {
                 int i;
@@ -12053,7 +12060,7 @@ static void calendarpreferences_set(struct jmap_req *req,
                         char *val = strarray_remove(&caluseraddr.uris, i);
                         strarray_unshiftm(&caluseraddr.uris, val);
                     }
-                    r = caldav_caluseraddr_write(calhomembox, req->userid, &caluseraddr);
+                    r = caldav_caluseraddr_write(calhomembox, &caluseraddr);
                 }
                 else {
                     jmap_parser_invalid(parser, "defaultParticipantIdentityId");
@@ -12061,7 +12068,7 @@ static void calendarpreferences_set(struct jmap_req *req,
             }
             else {
                 caluseraddr.pref = strarray_size(&caluseraddr.uris);
-                r = caldav_caluseraddr_write(calhomembox, req->userid, &caluseraddr);
+                r = caldav_caluseraddr_write(calhomembox, &caluseraddr);
             }
         }
         caldav_caluseraddr_fini(&caluseraddr);

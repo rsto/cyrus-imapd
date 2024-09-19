@@ -265,7 +265,7 @@ static char *_emailalert_recipient(const char *userid)
     char *mboxname = caldav_mboxname(userid, NULL);
     char *recipient = NULL;
 
-    if (!caldav_caluseraddr_read(mboxname, userid, &caluseraddr)) {
+    if (!caldav_caluseraddr_read(mboxname, &caluseraddr)) {
         if (strarray_size(&caluseraddr.uris)) {
             const char *item = strarray_nth(&caluseraddr.uris, 0);
             if (!strncasecmp(item, "mailto:", 7)) item += 7;

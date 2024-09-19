@@ -57,11 +57,9 @@ struct caldav_caluseraddr {
 };
 
 extern int caldav_caluseraddr_read(const char *mboxname,
-                                   const char *userid,
                                    struct caldav_caluseraddr *addrs);
 
 extern int caldav_caluseraddr_write(struct mailbox *mbox,
-                                    const char *userid,
                                     const struct caldav_caluseraddr *addrs);
 
 extern void caldav_caluseraddr_fini(struct caldav_caluseraddr *addr);

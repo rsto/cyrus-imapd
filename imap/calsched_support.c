@@ -59,7 +59,6 @@
 
 
 EXPORTED int caldav_caluseraddr_read(const char *mboxname,
-                                     const char *userid,
                                      struct caldav_caluseraddr *addr)
 {
     static const char *annot =
@@ -67,7 +66,7 @@ EXPORTED int caldav_caluseraddr_read(const char *mboxname,
 
     struct buf buf = BUF_INITIALIZER;
 
-    int r = annotatemore_lookupmask(mboxname, annot, userid, &buf);
+    int r = annotatemore_lookup(mboxname, annot, "", &buf);
     if (r || !buf.len) {
         buf_free(&buf);
         return r ? r : IMAP_NOTFOUND;
@@ -100,7 +99,6 @@ EXPORTED int caldav_caluseraddr_read(const char *mboxname,
 }
 
 EXPORTED int caldav_caluseraddr_write(struct mailbox *mbox,
-                                      const char *userid,
                                       const struct caldav_caluseraddr *addr)
 {
     static const char *annot =
@@ -122,7 +120,7 @@ EXPORTED int caldav_caluseraddr_write(struct mailbox *mbox,
         }
     }
 
-    r = annotate_state_writemask(astate, annot, userid, &buf);
+    r = annotate_state_write(astate, annot, "", &buf);
 
 done:
     buf_free(&buf);
@@ -146,10 +144,10 @@ EXPORTED void get_schedule_addresses(const char *mboxname,
     struct caldav_caluseraddr caluseraddr = CALDAV_CALUSERADDR_INITIALIZER;
 
     /* check calendar-user-address-set for target user's mailbox */
-    int r = caldav_caluseraddr_read(mboxname, userid, &caluseraddr);
+    int r = caldav_caluseraddr_read(mboxname, &caluseraddr);
     if (r) {
         char *calhome = caldav_mboxname(userid, NULL);
-        r = caldav_caluseraddr_read(calhome, userid, &caluseraddr);
+        r = caldav_caluseraddr_read(calhome, &caluseraddr);
         free(calhome);
     }
 

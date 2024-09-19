@@ -516,7 +516,7 @@ static const struct prop_entry caldav_props[] = {
 
     /* CalDAV Sharing (draft-pot-caldav-sharing) properties */
     { "calendar-user-address-set", NS_CALDAV,
-      PROP_COLLECTION | PROP_PERUSER,
+      PROP_COLLECTION,
       propfind_caluseraddr, proppatch_caluseraddr, NULL },
 
     /* Calendar Availability (RFC 7953) properties */
@@ -5989,7 +5989,7 @@ static int propfind_caluseraddr_all(const xmlChar *name, xmlNsPtr ns,
 
         char *mailboxname = caldav_mboxname(fctx->req_tgt->userid, NULL);
 
-        r = caldav_caluseraddr_read(mailboxname, fctx->req_tgt->userid, &addr);
+        r = caldav_caluseraddr_read(mailboxname, &addr);
         if (!r && strarray_size(&addr.uris)) {
             if (isemail) {
                 xml_add_href(node, fctx->ns[NS_DAV], strarray_nth(&addr.uris, 0));
@@ -6042,7 +6042,7 @@ static int propfind_caluseraddr_all(const xmlChar *name, xmlNsPtr ns,
 
         buf_reset(&fctx->buf);
 
-        r = caldav_caluseraddr_read(fctx->mbentry->name, fctx->req_tgt->userid, &addr);
+        r = caldav_caluseraddr_read(fctx->mbentry->name, &addr);
         if (!r && strarray_size(&addr.uris)) {
             node = xml_add_prop(HTTP_OK, fctx->ns[NS_DAV],
                                 &propstat[PROPSTAT_OK], name, ns, NULL, 0);
@@ -6107,6 +6107,7 @@ int proppatch_caluseraddr(xmlNodePtr prop, unsigned set,
                          &propstat[PROPSTAT_ERROR],
                          prop->name, prop->ns, NULL, 0);
             *pctx->ret = HTTP_SERVER_ERROR;
+
             return 0;
         }
     }
@@ -6124,7 +6125,7 @@ int proppatch_caluseraddr(xmlNodePtr prop, unsigned set,
         buf_reset(&pctx->buf);
 
         struct caldav_caluseraddr old = CALDAV_CALUSERADDR_INITIALIZER;
-        caldav_caluseraddr_read(mailbox_name(pctx->mailbox), httpd_userid, &old);
+        caldav_caluseraddr_read(mailbox_name(pctx->mailbox), &old);
 
         struct caldav_caluseraddr new = CALDAV_CALUSERADDR_INITIALIZER;
 
@@ -6156,7 +6157,6 @@ int proppatch_caluseraddr(xmlNodePtr prop, unsigned set,
                                      prop->name, prop->ns, NULL, 0);
 
                         *pctx->ret = HTTP_FORBIDDEN;
-
                         return 0;
                     }
                 }
@@ -6175,7 +6175,7 @@ int proppatch_caluseraddr(xmlNodePtr prop, unsigned set,
         }
 
         // Write schedule addresses
-        int r = caldav_caluseraddr_write(pctx->mailbox, httpd_userid, &new);
+        int r = caldav_caluseraddr_write(pctx->mailbox, &new);
         if (r) {
             xml_add_prop(HTTP_SERVER_ERROR, pctx->ns[NS_DAV],
                     &propstat[PROPSTAT_ERROR],
