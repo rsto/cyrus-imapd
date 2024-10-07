@@ -5846,6 +5846,9 @@ static char *extract_angle_bracket_msgid(char *src, char **rem)
     }
 
     /* find the end of the msgid */
+    /* XXX this is sketchy: if this msgid has no > but a later one on the same
+     * XXX line does, we'll see its > instead of the lack of one here, and
+     */
     if ((cp = strchr(cp, '>')) == NULL) {
         /* swallow the < we saw so that we don't spin forever! */
         src++;
