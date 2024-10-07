@@ -451,8 +451,8 @@ static void test_escaped_quoted_localpart(void)
 }
 
 
-/* handle a msgid with malformed <> */
-static void test_malformed_angles(void)
+/* handle a msgid with malformed <> between valid ones */
+static void test_malformed_angles1(void)
 {
 #define C_MSGID1    "<604.05.00006@example.com>"
 #define C_MSGID2    "<607.08.09@gmail.com"
@@ -476,12 +476,13 @@ static void test_malformed_angles(void)
     CU_ASSERT_STRING_EQUAL(m1, C_MSGID1);
     CU_ASSERT(s >= C_MSGIDS && s <= C_MSGIDS+sizeof(C_MSGIDS));
 
+    /* XXX we don't see the broken message id at all, next read gets MSGID3 */
     m2 = message_iter_msgid(s, 0, &s);
     CU_ASSERT_PTR_NOT_NULL(m2);
     CU_ASSERT_STRING_EQUAL(m2, C_MSGID3);
     CU_ASSERT(s >= C_MSGIDS && s <= C_MSGIDS+sizeof(C_MSGIDS));
 
-    /* we stop seeing msgids after 2nd msgid */
+    /* no messagids left */
     m3 = message_iter_msgid(s, 0, &s);
     CU_ASSERT_PTR_NULL(m3);
 
@@ -490,6 +491,55 @@ static void test_malformed_angles(void)
 
     free(m1);
     free(m2);
+#undef C_MSGID1
+#undef C_MSGID2
+#undef C_MSGID3
+}
+
+/* handle a msgid with malformed <> at end */
+static void test_malformed_angles2(void)
+{
+#define C_MSGID1    "<604.05.00006@example.com>"
+#define C_MSGID2    "<607.08.09@gmail.com>"
+#define C_MSGID3    "<6000A-0B-0000C@apple.com"
+    static const char C_MSGIDS[] =
+        C_MSGID1 " " C_MSGID2 " " C_MSGID3;
+    char *s;
+    char *m1;
+    char *m2;
+    char *m3;
+
+    /* We checked in the "simple" test that buffers are unmolested,
+     * so this time just pass message_iter_msgid() a const variable */
+    s = (char *)C_MSGIDS;
+
+    /* each call should returns a separate newly allocated string
+     * which is the next msgid in the input */
+
+    m1 = message_iter_msgid(s, 0, &s);
+    CU_ASSERT_PTR_NOT_NULL(m1);
+    CU_ASSERT_STRING_EQUAL(m1, C_MSGID1);
+    CU_ASSERT(s >= C_MSGIDS && s <= C_MSGIDS+sizeof(C_MSGIDS));
+
+    m2 = message_iter_msgid(s, 0, &s);
+    CU_ASSERT_PTR_NOT_NULL(m2);
+    CU_ASSERT_STRING_EQUAL(m2, C_MSGID2);
+    CU_ASSERT(s >= C_MSGIDS && s <= C_MSGIDS+sizeof(C_MSGIDS));
+
+    /* message-id with unterminated < is corrected */
+    m3 = message_iter_msgid(s, 0, &s);
+    CU_ASSERT_PTR_NOT_NULL(m3);
+    CU_ASSERT_STRING_EQUAL(m3, C_MSGID3 ">");
+    CU_ASSERT(s >= C_MSGIDS && s <= C_MSGIDS+sizeof(C_MSGIDS));
+
+    /* check the returned msgids are all distinct */
+    CU_ASSERT_PTR_NOT_EQUAL(m1, m2);
+    CU_ASSERT_PTR_NOT_EQUAL(m1, m3);
+    CU_ASSERT_PTR_NOT_EQUAL(m2, m3);
+
+    free(m1);
+    free(m2);
+    free(m3);
 #undef C_MSGID1
 #undef C_MSGID2
 #undef C_MSGID3
@@ -599,6 +649,21 @@ static void test_regression(void)
             .expect = "<a!#$%&'*+-/=?^_`{|}~@c.d>",
             .outcome = ACCEPT,
         },
+        {
+            .input = "<no-closing-bracket-no-domain",
+            .expect = "<no-closing-bracket-no-domain>",
+            .outcome = ACCEPT,
+        },
+        {
+            .input = "<no-closing-bracket@domain",
+            .expect = "<no-closing-bracket@domain>",
+            .outcome = ACCEPT,
+        },
+        {
+            .input = "<P[20",
+            .expect = "<P[20>",
+            .outcome = ACCEPT,
+        },
 
 
         // Invalid message-ids that are rejected:
@@ -643,4 +708,4 @@ static void test_regression(void)
     }
 }
 
-    /* vim: set ft=c: */
+/* vim: set ft=c: */
