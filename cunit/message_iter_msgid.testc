@@ -599,6 +599,16 @@ static void test_regression(void)
             .expect = "<a!#$%&'*+-/=?^_`{|}~@c.d>",
             .outcome = ACCEPT,
         },
+        {
+            .input = "<no-closing-bracket-no-domain",
+            .expect = "<no-closing-bracket-no-domain>",
+            .outcome = ACCEPT,
+        },
+        {
+            .input = "<no-closing-bracket@domain",
+            .expect = "<no-closing-bracket@domain>",
+            .outcome = ACCEPT,
+        },
 
 
         // Invalid message-ids that are rejected:
@@ -643,4 +653,4 @@ static void test_regression(void)
     }
 }
 
-    /* vim: set ft=c: */
+/* vim: set ft=c: */

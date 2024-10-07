@@ -5815,9 +5815,9 @@ static char *extract_angle_bracket_msgid(char *src, char **rem)
     if (isalnum(*cp)) {
         char *myrem = NULL;
         char *msgid = extract_dotatom_msgid(cp, ">", &myrem);
-        if (msgid && myrem && *myrem == '>') {
+        if (msgid && myrem && (*myrem == '\0' || *myrem == '>')) {
             if (rem) {
-                *rem = myrem + 1;
+                *rem = *myrem ? myrem + 1 : myrem;
             }
             return msgid;
         }
@@ -5847,6 +5847,8 @@ static char *extract_angle_bracket_msgid(char *src, char **rem)
 
     /* find the end of the msgid */
     if ((cp = strchr(cp, '>')) == NULL) {
+        /* swallow the < we saw so that we don't spin forever! */
+        src++;
         goto done;
     }
 
