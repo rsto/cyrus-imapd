@@ -609,6 +609,11 @@ static void test_regression(void)
             .expect = "<no-closing-bracket@domain>",
             .outcome = ACCEPT,
         },
+        {
+            .input = "<P[20",
+            .expect = "<P[20>",
+            .outcome = ACCEPT,
+        },
 
 
         // Invalid message-ids that are rejected:
