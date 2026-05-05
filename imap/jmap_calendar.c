@@ -1035,7 +1035,7 @@ static int jmap_calendar_get(struct jmap_req *req)
     }
 
     /* Build response */
-    get.state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
+    get.state = jmap_state_string(req, 0, MBTYPE_CALENDAR, 0);
     jmap_ok(req, jmap_get_reply(&get));
 
 done:
@@ -1112,7 +1112,8 @@ done:
 static int jmap_calendar_changes(struct jmap_req *req)
 {
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
-    struct jmap_changes changes = JMAP_CHANGES_INITIALIZER;
+    struct jmap_changes changes =
+        { .prefixed_state = USER_COMPACT_EMAILIDS(req->cstate) };
     json_t *err = NULL;
     int r = 0;
 
@@ -2260,16 +2261,14 @@ static int jmap_calendar_set(struct jmap_req *req)
         goto done;
     }
 
-    if (set.if_in_state) {
-        if (atomodseq_t(set.if_in_state) != jmap_modseq(req, MBTYPE_CALENDAR, 0)) {
-            jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
-            goto done;
-        }
-        set.old_state = xstrdup(set.if_in_state);
+    modseq_t old_modseq = jmap_modseq(req, MBTYPE_CALENDAR, 0);
+    if (set.if_in_state &&
+        !jmap_state_matches(req->cstate, set.if_in_state, old_modseq)) {
+        jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
+        goto done;
     }
-    else {
-        set.old_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
-    }
+
+    set.old_state = jmap_state_string(req, old_modseq, MBTYPE_CALENDAR, 0);
 
     r = caldav_create_defaultcalendars(req->accountid,
                                        &httpd_namespace, req->authstate, NULL);
@@ -2421,7 +2420,8 @@ static int jmap_calendar_set(struct jmap_req *req)
         mboxlist_entry_free(&mbentry);
     }
 
-    set.new_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD));
+    set.new_state =
+        jmap_state_string(req, 0, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD);
 
     jmap_ok(req, jmap_set_reply(&set));
 
@@ -4201,7 +4201,7 @@ static int jmap_calendarevent_get(struct jmap_req *req)
     }
 
     /* Build response */
-    get.state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
+    get.state = jmap_state_string(req, 0, MBTYPE_CALENDAR, 0);
     jmap_ok(req, jmap_get_reply(&get));
 
 done:
@@ -6439,16 +6439,14 @@ static int jmap_calendarevent_set(struct jmap_req *req)
         goto done;
     }
 
-    if (set.if_in_state) {
-        if (atomodseq_t(set.if_in_state) != jmap_modseq(req, MBTYPE_CALENDAR, 0)) {
-            jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
-            goto done;
-        }
-        set.old_state = xstrdup(set.if_in_state);
+    modseq_t old_modseq = jmap_modseq(req, MBTYPE_CALENDAR, 0);
+    if (set.if_in_state &&
+        !jmap_state_matches(req->cstate, set.if_in_state, old_modseq)) {
+        jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
+        goto done;
     }
-    else {
-        set.old_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
-    }
+
+    set.old_state = jmap_state_string(req, old_modseq, MBTYPE_CALENDAR, 0);
 
     r = caldav_create_defaultcalendars(req->accountid,
                                        &httpd_namespace, req->authstate, NULL);
@@ -6601,7 +6599,8 @@ static int jmap_calendarevent_set(struct jmap_req *req)
     jmap_caleventid_free(&eid);
 
 
-    set.new_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD));
+    set.new_state =
+        jmap_state_string(req, 0, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD);
 
     jmap_ok(req, jmap_set_reply(&set));
 
@@ -6725,7 +6724,8 @@ done:
 static int jmap_calendarevent_changes(struct jmap_req *req)
 {
     struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
-    struct jmap_changes changes = JMAP_CHANGES_INITIALIZER;
+    struct jmap_changes changes =
+        { .prefixed_state = USER_COMPACT_EMAILIDS(req->cstate) };
     json_t *err = NULL;
     struct caldav_db *db;
     struct geteventchanges_rock rock = {
@@ -7815,7 +7815,7 @@ static int jmap_calendarevent_query(struct jmap_req *req)
     }
 
     /* Build response */
-    query.query_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
+    query.query_state = jmap_state_string(req, 0, MBTYPE_CALENDAR, 0);
 
     json_t *res = jmap_query_reply(&query);
     if (debug) {
@@ -7976,6 +7976,7 @@ static int jmap_calendarevent_copy(struct jmap_req *req)
     json_t *destroy_events = json_array();
     struct mailbox *notifmbox = NULL;
     mbentry_t *notifmb = NULL;
+    struct conversations_state *from_cstate = NULL;
 
     /* Parse request */
     jmap_copy_parse(req, &parser, NULL, NULL, &copy, &err);
@@ -7984,27 +7985,36 @@ static int jmap_calendarevent_copy(struct jmap_req *req)
         goto done;
     }
 
+    int r = conversations_open_user(copy.from_account_id, 0, &from_cstate);
+    if (r) {
+        xsyslog(LOG_ERR, "can't open conversations",
+                "fromAccountId=<%s> error=<%s>",
+                copy.from_account_id, error_message(r));
+        jmap_error(req, jmap_server_error(r));
+        goto done;
+    }
+
     if (copy.if_from_in_state) {
         struct mboxname_counters counters;
         char *srcinbox = mboxname_user_mbox(copy.from_account_id, NULL);
         assert (!mboxname_read_counters(srcinbox, &counters));
         free(srcinbox);
-        if (atomodseq_t(copy.if_from_in_state) != counters.caldavmodseq) {
+
+        if (!jmap_state_matches(from_cstate,
+                                copy.if_from_in_state, counters.caldavmodseq)) {
             jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
             goto done;
         }
     }
 
-    if (copy.if_in_state) {
-        if (atomodseq_t(copy.if_in_state) != jmap_modseq(req, MBTYPE_CALENDAR, 0)) {
-            jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
-            goto done;
-        }
-        copy.old_state = xstrdup(copy.if_in_state);
+    modseq_t old_modseq = jmap_modseq(req, MBTYPE_CALENDAR, 0);
+    if (copy.if_in_state &&
+        !jmap_state_matches(req->cstate, copy.if_in_state, old_modseq)) {
+        jmap_error(req, json_pack("{s:s}", "type", "stateMismatch"));
+        goto done;
     }
-    else {
-        copy.old_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, 0));
-    }
+
+    copy.old_state = jmap_state_string(req, old_modseq, MBTYPE_CALENDAR, 0);
 
     src_db = caldav_open_userid(copy.from_account_id);
     if (!src_db) {
@@ -8018,7 +8028,7 @@ static int jmap_calendarevent_copy(struct jmap_req *req)
     }
 
     /* Open notifications mailbox, but continue even on error. */
-    int r = jmap_create_notify_collection(req->accountid, &notifmb);
+    r = jmap_create_notify_collection(req->accountid, &notifmb);
     if (!r) r = mailbox_open_iwl(notifmb->name, &notifmbox);
     if (r) {
         xsyslog(LOG_WARNING, "can not open jmapnotify collection",
@@ -8050,7 +8060,8 @@ static int jmap_calendarevent_copy(struct jmap_req *req)
     }
 
     /* Build response */
-    copy.new_state = modseqtoa(jmap_modseq(req, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD));
+    copy.new_state =
+        jmap_state_string(req, 0, MBTYPE_CALENDAR, JMAP_MODSEQ_RELOAD);
     jmap_ok(req, jmap_copy_reply(&copy));
 
     /* Destroy originals, if requested */
@@ -8066,6 +8077,7 @@ static int jmap_calendarevent_copy(struct jmap_req *req)
     }
 
 done:
+    conversations_commit(&from_cstate);
     mailbox_close(&notifmbox);
     mboxlist_entry_free(&notifmb);
     json_decref(destroy_events);
