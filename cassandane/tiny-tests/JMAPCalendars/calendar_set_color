@@ -125,7 +125,7 @@ EOF
 EOF
 
     xlog $self, "update calendar with hex color + alpha value";
-    $res = $CalDAV->Request('PROPPATCH', "/dav/calendars/user/cassandane/". $id,
+    $res = $CalDAV->Request('PROPPATCH', $href,
                             $proppatchXml, 'Content-Type' => 'text/xml');
 
     xlog $self, "assert alpha channel is stripped via JMAP";
