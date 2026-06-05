@@ -1,0 +1,39 @@
+#!perl
+use Cassandane::Tiny;
+
+sub test_calendarevent_set_create_null_values
+    ($self)
+{
+    my $jmap = $self->default_user->jmap;
+    my $calid = $self->default_user->calendars->default->id;
+
+    my $res = $jmap->request([
+        [ "CalendarEvent/set" => {
+            create => {
+                1 => {
+                    calendarIds => { $calid => JSON::true },
+                    title => 'test',
+                    start => '2026-06-05T15:00:00',
+                    timeZone => undef,
+                    organizerCalendarAddress => undef,
+                    participants => {
+                        foo => {
+                            calendarAddress => 'mailto:foo@local',
+                            name => undef,
+                        },
+                    },
+                },
+            },
+        }, "a", ],
+        [ "CalendarEvent/get" => {
+            ids => [ '#1' ],
+        }, "b", ],
+    ]);
+
+    my $event = $res->sentence_named('CalendarEvent/get')->arguments->{list}[0];
+    $self->assert_not_null($event);
+    $self->assert(not exists $event->{timeZone});
+    $self->assert(not exists $event->{organizerCalendarAddress});
+    $self->assert_not_null($event->{participants});
+    $self->assert(not exists $event->{participants}{foo}{name});
+}
