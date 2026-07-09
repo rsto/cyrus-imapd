@@ -12,6 +12,8 @@
 #include "global.h"
 #include "httpd.h"
 #include "jscalendar.h"
+#include "jscontact.h"
+#include "vcard_support.h"
 #include "xstrlcpy.h"
 
 /* generated headers are not necessarily in current directory */
@@ -197,6 +199,94 @@ done:
     return ret;
 }
 
+static int convert_to_jscontact(struct transaction_t *txn)
+{
+    vcardcomponent *vcard = NULL;
+    json_t *jcard = NULL;
+    char *resp_payload = NULL;
+    jscontact_cfg_t jscontact_cfg = { };
+    int ret = 0;
+
+    /* Parse the request body */
+    vcard = vcard_parse_string(buf_cstring(&txn->req_body.payload));
+    if (!vcard) {
+        txn->error.desc = "Could not parse vCard data";
+        ret = HTTP_BAD_REQUEST;
+        goto done;
+    }
+
+    /* Convert to JSContact */
+    jcard = jscontact_from_vcard(&jscontact_cfg, vcard);
+    if (!jcard) {
+        txn->error.desc = "Failed to convert to JSContact";
+        ret = HTTP_SERVER_ERROR;
+        goto done;
+    }
+
+    /* Write the response */
+    resp_payload = json_dumps(
+        jcard,
+        JSON_PRESERVE_ORDER |
+            (config_httpprettytelemetry ? JSON_INDENT(2) : JSON_COMPACT));
+    if (!resp_payload) {
+        txn->error.desc = "Error dumping JSON object";
+        ret = HTTP_SERVER_ERROR;
+        goto done;
+    }
+    txn->resp_body.type = "application/jscontact+json";
+    write_body(HTTP_OK, txn, resp_payload, strlen(resp_payload));
+
+done:
+    if (vcard)
+        vcardcomponent_free(vcard);
+    json_decref(jcard);
+    free(resp_payload);
+    return ret;
+}
+
+static int convert_to_vcard(struct transaction_t *txn)
+{
+    json_t *jobj = NULL;
+    vcardcomponent *vcard = NULL;
+    jscontact_cfg_t jscontact_cfg = { };
+    struct jmap_parser parser = JMAP_PARSER_INITIALIZER;
+    int ret = 0;
+
+    /* Parse the request body */
+    json_error_t jerr;
+    jobj = json_loads(buf_cstring(&txn->req_body.payload), 0, &jerr);
+    if (!jobj) {
+        txn->error.desc = "Could not parse JSON data";
+        ret = HTTP_BAD_REQUEST;
+        goto done;
+    }
+
+    /* Convert to vCard */
+    vcard = jscontact_to_vcard(&jscontact_cfg, jobj, &parser);
+    if (vcard) {
+        const char *resp_payload = vcardcomponent_as_vcard_string(vcard);
+        txn->resp_body.type = "text/vcard";
+        write_body(HTTP_OK, txn, resp_payload, strlen(resp_payload));
+    }
+    else if (json_array_size(parser.invalid)) {
+        json_t *jerr = json_pack("{s:O}", "invalidProperties", parser.invalid);
+        char *err = json_dumps(jerr, JSON_INDENT(2) | JSON_ENCODE_ANY);
+        write_body(HTTP_BAD_REQUEST, txn, err, strlen(err));
+        json_decref(jerr);
+        goto done;
+    }
+    else {
+        txn->error.desc = "Failed to convert to vCard";
+        ret = HTTP_SERVER_ERROR;
+    }
+
+done:
+    if (vcard) vcardcomponent_free(vcard);
+    jmap_parser_fini(&parser);
+    json_decref(jobj);
+    return ret;
+}
+
 /* Perform a POST request */
 static int meth_post(struct transaction_t *txn,
                      void *params __attribute__((unused)))
@@ -226,7 +316,16 @@ static int meth_post(struct transaction_t *txn,
         return convert_to_ical(txn);
     }
 
-    txn->error.desc = "This method requires a "
-        "text/calendar or application/jscalendar+json body";
+    if (hdr && is_mediatype("text/vcard", hdr[0])) {
+        return convert_to_jscontact(txn);
+    }
+
+    if (hdr && is_mediatype("application/jscontact+json", hdr[0])) {
+        return convert_to_vcard(txn);
+    }
+
+    txn->error.desc = "This method requires a text/calendar, "
+        "application/jscalendar+json, text/vcard or "
+        "application/jscontact+json body";
     return HTTP_BAD_MEDIATYPE;
 }
