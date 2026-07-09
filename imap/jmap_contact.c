@@ -22,6 +22,7 @@
 #include "http_dav.h"
 #include "http_dav_sharing.h"
 #include "http_jmap.h"
+#include "jscontact.h"
 #include "json_support.h"
 #include "mailbox.h"
 #include "mboxname.h"
@@ -9927,4 +9928,49 @@ done:
     free(propname);
     free(mediatype);
     return res;
+}
+
+HIDDEN json_t *jscontact_from_vcard(jscontact_cfg_t *cfg __attribute__((unused)),
+                                    vcardcomponent *vcard)
+{
+    return jmap_card_from_vcard(NULL, vcard, NULL, NULL, NULL,
+                                IGNORE_VCARD_VERSION | SET_VCARD_CONVPROPS);
+}
+
+HIDDEN vcardcomponent *jscontact_to_vcard(jscontact_cfg_t *cfg __attribute__((unused)),
+                                          json_t *jcard,
+                                          struct jmap_parser *parser)
+{
+    vcardcomponent *card =
+        vcardcomponent_vanew(VCARD_VCARD_COMPONENT,
+                             vcardproperty_new_version(VCARD_VERSION_40),
+                             NULL);
+
+    // Set UID. JMAP ContactCard/set take care of this, too.
+    const char *uid = json_string_value(json_object_get(jcard, "uid"));
+    if (uid) {
+        vcardproperty *uidprop = vcardproperty_new_uid(uid);
+        xmlURIPtr xuri = xmlParseURI(uid);
+        if (!xuri || !xuri->scheme) {
+            vcardproperty_set_value(uidprop, vcardvalue_new_text(uid));
+        }
+        xmlFreeURI(xuri);
+        vcardcomponent_add_property(card, uidprop);
+    }
+
+    ptrarray_t blobs = PTRARRAY_INITIALIZER;
+    jmap_contact_errors_t errors = { parser->invalid, NULL };
+
+    _jscard_to_vcard(NULL, NULL, NULL, card, jcard, NULL, &blobs, &errors);
+
+    property_blob_t *blob;
+    while ((blob = ptrarray_pop(&blobs))) property_blob_free(&blob);
+    json_decref(errors.blobNotFound);
+
+    if (json_array_size(parser->invalid)) {
+        vcardcomponent_free(card);
+        card = NULL;
+    }
+
+    return card;
 }
