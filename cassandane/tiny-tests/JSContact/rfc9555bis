@@ -1,0 +1,7 @@
+#!perl
+use Cassandane::Tiny;
+
+sub test_rfc9555bis($self)
+{
+
+}
