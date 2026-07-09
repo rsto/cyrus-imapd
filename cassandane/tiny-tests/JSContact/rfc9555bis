@@ -1,7 +1,222 @@
 #!perl
 use Cassandane::Tiny;
+use Carp;
+use JSON::XS;
+use XML::LibXML;
+use Sub::Install;
+use Encode qw(encode_utf8);
 
-sub test_rfc9555bis($self)
+sub expand_vcard($example)
 {
+    my $vcard = $example;
 
+    # Set BEGIN:VCARD.
+    if ($vcard !~ /\ABEGIN:VCARD\r\n/i) {
+        $vcard = "BEGIN:VCARD\r\n" . $vcard;
+    }
+
+    # Set END:VCARD.
+    if ($vcard !~ /END:VCARD\r\n\z/i) {
+        $vcard = $vcard . "END:VCARD\r\n";
+    }
+
+    # Strip "..." lines.
+    if ($vcard =~ /^\.\.\.\r\n/m) {
+        $vcard =~ s/^\.\.\.\r\n//mg;
+    }
+
+    # Add mandatory properties, if not set already.
+    my $mandatory_props = {
+        FN => 'Testy McTest',
+        VERSION => '4.0',
+        UID => 'deadbeef-dead-beef-dead-beefdeadbeef',
+    };
+
+    foreach my $key (sort keys %$mandatory_props) {
+        next if $vcard =~ /^\Q$key\E[:;]/mi;
+        my $value = $mandatory_props->{$key};
+        $vcard =~ s/\A(BEGIN:VCARD\r\n)/$1$key:$value\r\n/i;
+    }
+
+    return $vcard;
+}
+
+sub expand_jscard($example)
+{
+    my $s = $example;
+
+    # Trim leading and trailing whitespace.
+    $s =~ s/\A\s+//;
+    $s =~ s/\s+\z//;
+
+    # Wrap a fragment in an object, if not already one.
+    if ($s !~ /\A\{/) {
+        $s = "{" . '"...": "",' . $s . "}";
+    }
+
+    # Parse into a JSON object.
+    my $jobj = eval { decode_json($s) };
+    croak "Failed to parse JSON:\n$s\n$@" unless defined $jobj;
+
+    # Default type is Card, if not set.
+    $jobj->{'@type'} //= 'Card';
+
+    # Expand JSON object to Card.
+    my $parent_by_type = {
+        'Address' => { type => "Card", path => "addresses" },
+        'Anniversary' => { type => "Card", path => "anniversaries" },
+        'Calendar' => { type => "Card", path => "calendars" },
+        'CryptoKey' => { type => "Card", path => "cryptoKeys" },
+        'Directory' => { type => "Card", path => "directories" },
+        'EmailAddress' => { type => "Card", path => "emails" },
+        'LanguagePref' => { type => "Card", path => "preferredLanguages" },
+        'Link' => { type => "Card", path => "links" },
+        'Media' => { type => "Card", path => "media" },
+        'Name' => { type => "Card", path => "name", is_single_valued => 1 },
+        'Nickname' => { type => "Card", path => "nicknames" },
+        'Note' => { type => "Card", path => "notes" },
+        'OnlineService' => { type => "Card", path => "onlineServices" },
+        'Organization' => { type => "Card", path => "organizations" },
+        'PersonalInfo' => { type => "Card", path => "personalInfo" },
+        'Phone' => { type => "Card", path => "phones" },
+        'Pronouns' => { type => "SpeakToAs", path => "pronouns" },
+        'SchedulingAddress' => { type => "Card", path => "schedulingAddresses" },
+        'SpeakToAs' => { type => "Card", path => "speakToAs", is_single_valued => 1 },
+        'Title' => { type => "Card", path => "titles" },
+    };
+
+    while ($jobj->{'@type'} ne 'Card') {
+        my $type = $jobj->{'@type'};
+        my $parent  = $parent_by_type->{$type};
+        croak "Cannot expand \@type '$type' to Card" unless $parent;
+        $jobj = {
+            '@type'      => $parent->{type},
+            $parent->{path} => $parent->{is_single_valued} ? $jobj : { 1 => $jobj },
+        };
+    }
+
+    return $jobj;
+}
+
+sub new_jmatcher($jval)
+{
+    if (ref $jval eq 'HASH') {
+        my $is_partial = exists $jval->{'...'}
+            && !ref $jval->{'...'}
+            && $jval->{'...'} eq '';
+
+        my %matcher;
+        foreach my $key (keys %$jval) {
+            next if $key eq '...' && $is_partial;
+            $matcher{$key} = new_jmatcher($jval->{$key});
+        }
+
+        return $is_partial ? superhashof(\%matcher) : \%matcher;
+    }
+    elsif (ref $jval eq 'ARRAY') {
+        return [ map { new_jmatcher($_) } @$jval ];
+    }
+    else {
+        return $jval;
+    }
+}
+
+sub convert_vcard($self, $vcard)
+{
+    # Get HTTP connection to 'convert' module
+    my $service = $self->{instance}->get_service("http");
+    my $host    = $service->host();
+    my $port    = $service->port();
+    my $url     = "http://cassandane:secret\@$host:$port/convert";
+    my $http = HTTP::Tiny->new();
+
+    # POST request
+    my $content = $vcard;
+    my $headers = { 'Content-Type' => "text/vcard;charset=utf-8" };
+
+    xlog $self, ">>>>>>>> POST $url\n"
+        . join('', map { "$_: $headers->{$_}\n" } sort keys %$headers)
+        . "\n$content"
+        if get_verbose;
+
+    my $res = $http->post(
+        $url,
+        {
+            content => $content,
+            headers => $headers,
+        }
+    );
+
+    xlog $self, "<<<<<<<< $res->{status} $res->{reason}\n"
+      . join('', map { "$_: $res->{headers}{$_}\n" } sort keys %{ $res->{headers} }) . "\n"
+      . ($res->{content} // '')
+      if get_verbose;
+
+    # Compare response.
+    $self->assert_num_equals(200, $res->{status});
+    my $jscard = eval { decode_json($res->{content}) };
+    croak "Failed to parse response JSON:\n$res->{content}\n$@"
+        unless defined $jscard;
+
+    return $jscard;
+}
+
+sub run_v2j($self, $vcard_example, $jscard_example)
+{
+    xlog $self, "Original vCard example:\n$vcard_example\n"
+        if get_verbose;
+
+    xlog $self, "Original JSContact example:\n$jscard_example\n"
+        if get_verbose;
+
+    my $expanded_vcard = expand_vcard($vcard_example);
+
+    xlog $self, "Expanded vCard example:\n$expanded_vcard"
+        if get_verbose;
+
+    my $want_jscard = expand_jscard($jscard_example);
+
+    xlog $self, "Expanded JSContact example:\n"
+        . JSON::XS->new->pretty->encode($want_jscard)
+        if get_verbose;
+
+    my $got_jscard = $self->convert_vcard($expanded_vcard);
+    xlog $self, "Got JSContact response:\n"
+        . JSON::XS->new->pretty->encode($got_jscard)
+        if get_verbose;
+
+    # TODO normalize want_jscard and got_jscard, including identifiers and their references in localizations and convertedProperties.
+
+    my $jmatcher = new_jmatcher($want_jscard);
+    $self->assert_cmp_deeply($jmatcher, $got_jscard);
+}
+
+# Install a Cassandane test for each vCard/JSContact example pair defined in
+# the RFC 9555bis draft.
+my $rfc_xmlfile = 'data/rfc/draft-ietf-calext-rfc9555bis.xml';
+my $rfc_doc = XML::LibXML->load_xml(location => $rfc_xmlfile);
+
+foreach my $figure ($rfc_doc->findnodes('//figure[starts-with(@anchor, "test_")]')) {
+    my $test_anchor = $figure->getAttribute('anchor');
+    my @sourcecode = $figure->findnodes('./sourcecode');
+
+    my %example_by_type;
+    foreach my $sourcecode (@sourcecode) {
+        my $type = $sourcecode->getAttribute('type') // '';
+        $example_by_type{$type} = encode_utf8($sourcecode->textContent);
+    }
+
+    next unless @sourcecode == 2
+             && exists $example_by_type{vcard}
+             && exists $example_by_type{json};
+
+    my $vcard_example  = $example_by_type{vcard};
+    my $jscard_example = $example_by_type{json};
+
+    Sub::Install::install_sub({
+        code => sub ($self, @) {
+            $self->run_v2j($vcard_example, $jscard_example);
+        },
+        as => "test_rfc9555bis_${test_anchor}_v2j",
+    });
 }
